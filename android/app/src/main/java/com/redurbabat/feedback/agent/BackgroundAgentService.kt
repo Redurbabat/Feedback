@@ -18,6 +18,7 @@ import androidx.core.content.ContextCompat
 import com.redurbabat.feedback.MainActivity
 import com.redurbabat.feedback.R
 import com.redurbabat.feedback.device.SystemInfoProvider
+import com.redurbabat.feedback.files.FilesAgentFactory
 import com.redurbabat.feedback.pairing.AndroidDeviceMetadataProvider
 import com.redurbabat.feedback.permissions.LocalCapabilityStore
 import com.redurbabat.feedback.security.DeviceRegistrationStore
@@ -47,6 +48,7 @@ class BackgroundAgentService : Service() {
     private lateinit var backgroundStore: BackgroundConnectionStore
     private lateinit var registrationStore: DeviceRegistrationStore
     private lateinit var localCapabilities: LocalCapabilityStore
+    private lateinit var secretStore: SecretStore
     private var agent: DeviceAgentClient? = null
     private var stateJob: Job? = null
     private var reconnectJob: Job? = null
@@ -55,7 +57,8 @@ class BackgroundAgentService : Service() {
     override fun onCreate() {
         super.onCreate()
         backgroundStore = BackgroundConnectionStore(this)
-        registrationStore = DeviceRegistrationStore(SecretStore(this))
+        secretStore = SecretStore(this)
+        registrationStore = DeviceRegistrationStore(secretStore)
         localCapabilities = LocalCapabilityStore(this)
         createNotificationChannel()
         startForegroundVisible(AgentConnectionState.CONNECTING)
@@ -124,6 +127,7 @@ class BackgroundAgentService : Service() {
             localCapabilities = localCapabilities,
             systemInfoProvider = SystemInfoProvider(this),
             registrationStore = registrationStore,
+            filesHandler = FilesAgentFactory.create(this, secretStore),
         )
         agent = next
         currentAgent = next

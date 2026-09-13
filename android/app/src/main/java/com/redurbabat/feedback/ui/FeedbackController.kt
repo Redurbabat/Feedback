@@ -7,6 +7,7 @@ import com.redurbabat.feedback.agent.BackgroundAgentService
 import com.redurbabat.feedback.agent.BackgroundConnectionStore
 import com.redurbabat.feedback.agent.DeviceAgentClient
 import com.redurbabat.feedback.device.SystemInfoProvider
+import com.redurbabat.feedback.files.FilesAgentFactory
 import com.redurbabat.feedback.network.FeedbackHttpException
 import com.redurbabat.feedback.network.OkHttpJsonTransport
 import com.redurbabat.feedback.network.ServerEndpoint
@@ -987,6 +988,7 @@ class FeedbackController(
             localCapabilities = localCapabilityStore,
             systemInfoProvider = systemInfoProvider,
             registrationStore = registrationStore,
+            filesHandler = FilesAgentFactory.create(applicationContext, secretStore),
         )
         agent = next
         agentStateJob = scope.launch {

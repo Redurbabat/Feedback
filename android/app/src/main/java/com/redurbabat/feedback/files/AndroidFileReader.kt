@@ -9,14 +9,6 @@ import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.InputStream
 
-/** One page of a listing (protocol/PROTOCOL.md section 8.3.5). */
-data class FileListPage(
-    val entries: List<FileEntry>,
-    val nextCursor: String?,
-)
-
-class FileReadException(message: String, cause: Throwable? = null) : Exception(message, cause)
-
 /**
  * Reads the owner's shared areas through the Storage Access Framework.
  *
@@ -32,17 +24,17 @@ class AndroidFileReader(
     context: Context,
     private val shareStore: FileShareStore,
     private val idRegistry: FileIdRegistry,
-) {
+) : FileSource {
     private val contentResolver = context.applicationContext.contentResolver
 
     /** The areas the owner shared, in wire form. */
-    fun shares(): List<FileShare> = shareStore.shares().map(StoredFileShare::toWire)
+    override fun shares(): List<FileShare> = shareStore.shares().map(StoredFileShare::toWire)
 
     /**
      * Lists one page. [directoryId] must be null (the share root) or an id previously handed out
      * inside the same share.
      */
-    fun list(
+    override fun list(
         shareId: String,
         directoryId: String?,
         cursor: String?,
@@ -100,7 +92,7 @@ class AndroidFileReader(
     }
 
     /** Metadata for one previously listed entry. */
-    fun metadata(shareId: String, fileId: String): FileEntry? {
+    override fun metadata(shareId: String, fileId: String): FileEntry? {
         val share = shareStore.find(shareId) ?: return null
         val documentId = idRegistry.resolveWithin(shareId, fileId)?.documentId ?: return null
         return entryOf(share, documentId, documentUri(share, documentId))
@@ -110,7 +102,7 @@ class AndroidFileReader(
      * Opens a stream for a previously listed file. The caller closes it. Returns null when the id
      * is unknown, belongs to another share, or names a directory.
      */
-    fun openStream(shareId: String, fileId: String): InputStream? {
+    override fun openStream(shareId: String, fileId: String): InputStream? {
         val share = shareStore.find(shareId) ?: return null
         val documentId = idRegistry.resolveWithin(shareId, fileId)?.documentId ?: return null
         val uri = documentUri(share, documentId)

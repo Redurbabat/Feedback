@@ -1,6 +1,10 @@
 package com.redurbabat.feedback.agent
 
 import com.redurbabat.feedback.device.SystemInfoProvider
+import com.redurbabat.feedback.files.FileTransferCancelReason
+import com.redurbabat.feedback.files.FilesOutcome
+import com.redurbabat.feedback.files.FilesRequestHandler
+import com.redurbabat.feedback.files.OutgoingFileMessage
 import com.redurbabat.feedback.network.ServerEndpoint
 import com.redurbabat.feedback.pairing.DeviceMetadata
 import com.redurbabat.feedback.permissions.LocalCapabilityStore
@@ -47,6 +51,8 @@ class DeviceAgentClient(
     private val localCapabilities: LocalCapabilityStore,
     private val systemInfoProvider: SystemInfoProvider,
     private val registrationStore: DeviceRegistrationStore,
+    /** Null where the device has no shared areas wired up; files.read then answers UNSUPPORTED. */
+    private val filesHandler: FilesRequestHandler? = null,
     private val client: OkHttpClient = OkHttpClient.Builder()
         .pingInterval(0, TimeUnit.SECONDS)
         .build(),
@@ -150,6 +156,14 @@ class DeviceAgentClient(
             MessageType.AGENT_HEARTBEAT_ACK -> Unit
             MessageType.CAPABILITY_UPDATE -> handleCapabilityUpdate(envelope)
             MessageType.SYSTEM_INFO_REQUEST -> handleSystemInfoRequest(socket, envelope, receivedAt)
+            MessageType.FILES_SHARES_REQUEST,
+            MessageType.FILES_LIST_REQUEST,
+            MessageType.FILES_METADATA_REQUEST,
+            MessageType.FILES_DOWNLOAD_START,
+            MessageType.FILES_DOWNLOAD_ACK,
+            MessageType.FILES_DOWNLOAD_CANCEL,
+            -> handleFilesRequest(socket, envelope)
+
             MessageType.DEVICE_REVOKED -> handleRevoked(socket)
             MessageType.ERROR -> Unit
             else -> sendError(
@@ -189,6 +203,10 @@ class DeviceAgentClient(
             return
         }
         serverGranted = parseCapabilities(envelope.payload.optJSONArray("serverGrantedCapabilities"))
+        if (!serverGranted.contains(Capability.FILES_READ)) {
+            // A withdrawn capability must stop an already running transfer, not just future ones.
+            webSocket?.let { cancelFileTransfers(it, FileTransferCancelReason.CAPABILITY_REVOKED) }
+        }
     }
 
     private fun handleSystemInfoRequest(
@@ -226,7 +244,91 @@ class DeviceAgentClient(
         )
     }
 
+    /**
+     * Answers one `files.*` request.
+     *
+     * The capability is re-evaluated here on every single request rather than once per session, so
+     * withdrawing `files.read` locally or on the server stops an in-flight browse immediately and
+     * cancels any running transfer.
+     */
+    private fun handleFilesRequest(socket: WebSocket, envelope: Envelope) {
+        val sessionError = envelope.sessionRequirementError()
+        if (sessionError != null) {
+            sendError(socket, envelope.messageId, sessionError, "Remote Session fehlt")
+            return
+        }
+
+        val handler = filesHandler
+        if (handler == null) {
+            sendError(
+                socket,
+                envelope.messageId,
+                ProtocolError.UNSUPPORTED,
+                "files.read ist auf diesem Geraet nicht verfuegbar",
+            )
+            return
+        }
+
+        val permission = EffectivePermission.evaluate(
+            capability = Capability.FILES_READ,
+            serverGranted = serverGranted,
+            deviceGranted = localCapabilities.granted(),
+            osAvailable = setOf(Capability.FILES_READ),
+            sessionAuthorized = setOf(Capability.FILES_READ),
+        )
+        val denial = permission.denialReason()
+        if (denial != null) {
+            cancelFileTransfers(socket, FileTransferCancelReason.CAPABILITY_REVOKED)
+            sendError(socket, envelope.messageId, denial, "files.read ist nicht freigegeben")
+            return
+        }
+
+        val outcome = when (envelope.type) {
+            MessageType.FILES_SHARES_REQUEST -> handler.handleSharesRequest()
+            MessageType.FILES_LIST_REQUEST -> handler.handleListRequest(envelope.payload)
+            MessageType.FILES_METADATA_REQUEST -> handler.handleMetadataRequest(envelope.payload)
+            MessageType.FILES_DOWNLOAD_START -> handler.handleDownloadStart(envelope.payload)
+            MessageType.FILES_DOWNLOAD_ACK -> handler.handleDownloadAck(envelope.payload)
+            MessageType.FILES_DOWNLOAD_CANCEL -> handler.handleCancel(envelope.payload)
+            else -> FilesOutcome.Failure(ProtocolError.UNSUPPORTED, "Unerwarteter files-Typ")
+        }
+
+        when (outcome) {
+            is FilesOutcome.Reply -> sendFileMessage(socket, envelope.sessionId, outcome.message)
+            is FilesOutcome.Failure ->
+                sendError(socket, envelope.messageId, outcome.error, outcome.message)
+
+            FilesOutcome.Accepted -> Unit
+        }
+
+        drainFileTransfers(socket, envelope.sessionId)
+    }
+
+    /** Puts out every chunk the send window currently allows. */
+    private fun drainFileTransfers(socket: WebSocket, sessionId: String?) {
+        val handler = filesHandler ?: return
+        for (message in handler.drainReadyMessages()) {
+            if (!sendFileMessage(socket, sessionId, message)) {
+                return
+            }
+        }
+    }
+
+    private fun cancelFileTransfers(socket: WebSocket, reason: FileTransferCancelReason) {
+        val handler = filesHandler ?: return
+        for (message in handler.cancelAll(reason)) {
+            sendFileMessage(socket, null, message)
+        }
+    }
+
+    private fun sendFileMessage(
+        socket: WebSocket,
+        sessionId: String?,
+        message: OutgoingFileMessage,
+    ): Boolean = send(socket, message.type, sessionId, message.payload)
+
     private fun handleRevoked(socket: WebSocket) {
+        cancelFileTransfers(socket, FileTransferCancelReason.DEVICE_REVOKED)
         registrationStore.clear()
         heartbeatJob?.cancel()
         heartbeatJob = null
