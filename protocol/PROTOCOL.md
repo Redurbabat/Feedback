@@ -240,6 +240,11 @@ neu koppeln; ein zweiter `claim` wird mit `PAIRING_ALREADY_USED` abgelehnt.
 | `GET` | `/devices/{id}` | Geraetedetails |
 | `PUT` | `/devices/{id}/capabilities` | serverseitig freigegebene Capabilities setzen |
 | `POST` | `/devices/{id}/system-info` | Live-Abfrage `system.info` ueber die Agent-Session |
+| `POST` | `/devices/{id}/files/session` | `files.read`-Remote-Session eroeffnen |
+| `GET` | `/devices/{id}/files/shares` | freigegebene Bereiche auflisten |
+| `GET` | `/devices/{id}/files/entries` | Eintraege eines Bereichs auflisten |
+| `GET` | `/devices/{id}/files/content` | Datei streamen (Download) |
+| `DELETE` | `/devices/{id}/files/session` | `files.read`-Session vorzeitig beenden |
 | `POST` | `/devices/{id}/revoke` | Geraet widerrufen |
 | `GET` | `/devices/{id}/audit` | Audit-Ereignisse des Geraets |
 | `GET` | `/events/ws` | Presence-/Pairing-Ereignisse fuer das Control Center |
@@ -285,6 +290,17 @@ Regeln:
 | `capability.update` | Server → Geraet | `{ serverGrantedCapabilities: string[] }` |
 | `system.info.request` | Server → Geraet | `{ }` (benoetigt `sessionId` und `system.info`) |
 | `system.info.response` | Geraet → Server | siehe 8.2 |
+| `files.shares.request` | Server → Geraet | `{ }` (benoetigt `sessionId` und `files.read`) |
+| `files.shares.response` | Geraet → Server | siehe 8.3.4 |
+| `files.list.request` | Server → Geraet | siehe 8.3.4 |
+| `files.list.response` | Geraet → Server | siehe 8.3.4 |
+| `files.metadata.request` | Server → Geraet | siehe 8.3.4 |
+| `files.metadata.response` | Geraet → Server | siehe 8.3.4 |
+| `files.download.start` | Server → Geraet | siehe 8.3.6 |
+| `files.download.chunk` | Geraet → Server | siehe 8.3.6 |
+| `files.download.ack` | Server → Geraet | siehe 8.3.6 |
+| `files.download.complete` | Geraet → Server | siehe 8.3.6 |
+| `files.download.cancel` | beide | siehe 8.3.7 |
 | `device.revoked` | Server → Geraet | `{ reason: "revoked_by_owner" }` |
 | `error` | beide | `{ code, message, relatesTo?: messageId }` |
 
@@ -309,7 +325,7 @@ clipboard.write
 Keine implizite Hierarchie: `screen.control` impliziert nicht `files.read`,
 `files.read` impliziert nicht `media.photos.read`.
 
-In v1 ist ausschliesslich `system.info` **implementiert**. Alle anderen Capabilities sind
+In v1 sind `system.info` und `files.read` **implementiert**. Alle anderen Capabilities sind
 deklariert, deny-by-default und liefern `UNSUPPORTED`, solange kein Feature dahintersteht.
 
 Effektive Berechtigung:
@@ -351,14 +367,160 @@ Standort, Werbe-IDs oder sonstige eindeutige Hardwarekennungen.
 
 `networkType` ist auf `wifi | cellular | ethernet | other | none` beschraenkt.
 
+### 8.3 `files.read`
+
+`files.read` ist **ausschliesslich lesend**. Es gibt in v1 kein `delete`, `rename`, `write`,
+`upload` oder `execute`, und es ist auch kein Nachrichtentyp dafuer reserviert.
+
+#### 8.3.1 Freigegebene Bereiche (Shares)
+
+Das Geraet exportiert **nie** sein Dateisystem. Der Besitzer waehlt lokal einzelne Dateien oder
+Verzeichnisse aus; jede Auswahl wird zu einem *Share*. Nur Inhalte innerhalb eines Shares sind
+ueber das Protokoll sichtbar.
+
+```json
+{
+  "shareId": "<opaque, base64url>",
+  "displayName": "Documents",
+  "kind": "tree",
+  "addedAt": "2026-09-13T11:22:33.000Z"
+}
+```
+
+`kind` ist `tree` (Verzeichnis) oder `file` (einzelne Datei).
+
+#### 8.3.2 Opake IDs
+
+Weder `shareId` noch `fileId` duerfen einen echten Pfad, eine Content-URI oder einen
+Dateisystem-Identifikator enthalten oder rekonstruierbar machen. Der Server und das Control
+Center kennen ausschliesslich diese undurchsichtigen Werte.
+
+`fileId` ist **sitzungsgebunden**: die Zuordnung `fileId` → lokale Ressource lebt nur innerhalb
+der Remote-Session, die sie ausgegeben hat. Eine `fileId` aus einer beendeten oder abgelaufenen
+Session wird mit `NOT_FOUND` beantwortet, nie mit dem Inhalt. Damit kann eine einmal gesehene ID
+spaeter nicht erneut eingeloest werden.
+
+Der Server darf `fileId`-Werte nicht dauerhaft speichern und nicht geraete- oder
+sitzungsuebergreifend wiederverwenden.
+
+#### 8.3.3 `FileEntry`
+
+```json
+{
+  "id": "<opaque fileId>",
+  "name": "Rechnung.pdf",
+  "mimeType": "application/pdf",
+  "size": 182734,
+  "modifiedAt": "2026-09-13T09:12:00.000Z",
+  "kind": "file"
+}
+```
+
+- `kind` ist `file` oder `directory`.
+- `size` ist bei `directory` immer `null`.
+- `name` ist der Anzeigename **ohne** Pfadanteil. Enthaelt er `/`, `\` oder `..`, lehnt der
+  Empfaenger den Eintrag ab (`INVALID_MESSAGE`): ein Pfadanteil im Namen ist der klassische Weg
+  zu einem Traversal auf der Gegenseite.
+- `modifiedAt` darf `null` sein, wenn Android keinen Wert liefert.
+
+#### 8.3.4 Nachrichtentypen
+
+| Typ | Richtung | Payload |
+| --- | --- | --- |
+| `files.shares.request` | Server → Geraet | `{ }` |
+| `files.shares.response` | Geraet → Server | `{ shares: Share[] }` |
+| `files.list.request` | Server → Geraet | `{ shareId, directoryId?, cursor?, limit? }` |
+| `files.list.response` | Geraet → Server | `{ shareId, entries: FileEntry[], nextCursor?: string }` |
+| `files.metadata.request` | Server → Geraet | `{ shareId, fileId }` |
+| `files.metadata.response` | Geraet → Server | `{ entry: FileEntry }` |
+| `files.download.start` | Server → Geraet | `{ transferId, shareId, fileId }` |
+| `files.download.chunk` | Geraet → Server | `{ transferId, sequence, data, last }` |
+| `files.download.ack` | Server → Geraet | `{ transferId, sequence }` |
+| `files.download.complete` | Geraet → Server | `{ transferId, totalBytes, sha256 }` |
+| `files.download.cancel` | beide | `{ transferId, reason }` |
+
+Alle `files.*`-Typen verlangen eine gueltige `sessionId` **und** effektive `files.read`.
+
+Korrelation: Anfrage/Antwort werden ueber `messageId` korreliert - die Antwort traegt den
+`messageId` der Anfrage in `relatesTo`. Transfers werden zusaetzlich ueber `transferId`
+korreliert. `sessionId` ist der Autorisierungsrahmen, nicht der Korrelationsschluessel:
+eine Files-Session traegt viele Anfragen.
+
+#### 8.3.5 Auflisten
+
+- `directoryId` fehlt ⇒ Wurzel des Shares. Bei `kind = "file"` enthaelt die Wurzel genau einen
+  Eintrag.
+- `limit` ist optional und wird auf `FILE_MAX_LIST_ENTRIES` gedeckelt.
+- `nextCursor` fehlt ⇒ letzte Seite. Ein Cursor ist opak und sitzungsgebunden.
+- Das Geraet listet **nie** oberhalb der Share-Wurzel. Ein `directoryId`, das nicht zu `shareId`
+  gehoert, wird mit `NOT_FOUND` beantwortet - nicht mit `FORBIDDEN`, damit die Antwort nicht
+  verraet, ob die Ressource existiert.
+
+#### 8.3.6 Download
+
+```text
+Server                                  Geraet
+  |-- files.download.start ------------->|  prueft Capability, Share, Groesse
+  |<-- files.download.chunk (seq 0) -----|
+  |-- files.download.ack (seq 0) ------->|
+  |<-- files.download.chunk (seq 1) -----|
+  |              ...                     |
+  |<-- files.download.chunk (last=true) -|
+  |<-- files.download.complete ----------|
+```
+
+- `data` ist `base64` (mit Padding) von hoechstens `FILE_CHUNK_BYTES` Rohbytes.
+- `sequence` beginnt bei `0` und steigt luecklos um `1`. Eine Luecke, eine Wiederholung oder eine
+  Sequenz nach `last` ⇒ `INVALID_MESSAGE` und Abbruch des Transfers.
+- Backpressure: das Geraet haelt hoechstens `FILE_TRANSFER_WINDOW` unbestaetigte Chunks
+  gleichzeitig offen und wartet danach auf `files.download.ack`.
+- `sha256` in `files.download.complete` ist `hex` ueber den **gesamten** Klartextinhalt. Der
+  Empfaenger prueft ihn und verwirft den Transfer bei Abweichung.
+- `totalBytes` muss zur Summe der empfangenen Chunks passen.
+- Ueberschreitet die Datei `FILE_MAX_DOWNLOAD_BYTES`, antwortet das Geraet auf
+  `files.download.start` mit `UNSUPPORTED` und beginnt keinen Transfer.
+- Das Geraet liest **streamend**. Eine vollstaendige Datei wird nie in den Speicher geladen.
+
+#### 8.3.7 Abbruch und Zeitueberschreitung
+
+`files.download.cancel` darf von beiden Seiten gesendet werden und beendet den Transfer sofort.
+`reason` ist einer von `client_cancelled`, `session_expired`, `capability_revoked`,
+`device_revoked`, `too_large`, `read_error`, `timeout`.
+
+Ein Transfer endet ausserdem bei:
+
+- Ablauf oder Widerruf der Remote-Session
+- Entzug von `files.read` server- oder geraeteseitig
+- Widerruf des Geraets
+- Verlust der Agent-Verbindung
+- `FILE_TRANSFER_IDLE_TIMEOUT_MS` ohne Fortschritt
+
+Mehr als `FILE_MAX_CONCURRENT_TRANSFERS` gleichzeitige Transfers pro Geraet ⇒ `RATE_LIMITED`.
+
+#### 8.3.8 Inhalte werden nicht gespeichert
+
+Der Server reicht Chunks durch und schreibt Dateiinhalte **nicht** auf Platte, weder als Cache
+noch als Zwischenablage. Ein abgebrochener Transfer hinterlaesst keine Teildatei. Dateiinhalte,
+Dateinamen und `fileId`-Werte erscheinen niemals im Log (Abschnitt 12).
+
 ## 9. Remote-Sessions
 
 Jede privilegierte Anfrage laeuft in einer Remote-Session:
 
 - `id`, `ownerId`, `deviceId`
 - `requestedCapabilities`, `approvedCapabilities`
-- `createdAt`, `expiresAt` (Standard `REMOTE_SESSION_TTL_MS = 60000` fuer `system.info`)
+- `createdAt`, `expiresAt`
 - `revokedAt`
+
+TTL nach Capability:
+
+| Capability | TTL | Begruendung |
+| --- | --- | --- |
+| `system.info` | `REMOTE_SESSION_TTL_MS = 60000` | eine einzelne Abfrage |
+| `files.read` | `FILES_SESSION_TTL_MS = 300000` | Blaettern und Download brauchen mehrere Anfragen |
+
+Eine `files.read`-Session verlaengert sich **nicht** unbegrenzt durch Aktivitaet: `expiresAt`
+steht beim Anlegen fest. Laeuft sie waehrend eines Transfers ab, wird der Transfer beendet.
 
 Abgelaufene oder widerrufene Sessions werden auf beiden Seiten abgelehnt
 (`SESSION_EXPIRED`). Das Geraet fuehrt keine Anfrage ohne gueltige `sessionId` aus.
@@ -399,6 +561,20 @@ unterschieden, solange das die Brute-Force-Analyse erleichtern wuerde.
 | `MAX_JSON_BODY_BYTES` | 16384 |
 | `DEVICE_NAME_MAX` | 64 |
 | `PUBLIC_KEY_MAX_BASE64` | 512 |
+| `FILES_SESSION_TTL_MS` | 300000 |
+| `FILE_CHUNK_BYTES` | 32768 |
+| `FILE_TRANSFER_WINDOW` | 4 |
+| `FILE_MAX_CONCURRENT_TRANSFERS` | 2 |
+| `FILE_TRANSFER_IDLE_TIMEOUT_MS` | 30000 |
+| `FILE_MAX_DOWNLOAD_BYTES` | 268435456 |
+| `FILE_MAX_LIST_ENTRIES` | 200 |
+| `FILE_NAME_MAX` | 255 |
+
+`FILE_CHUNK_BYTES` ist so gewaehlt, dass ein Chunk base64-kodiert samt Envelope sicher unter
+`MAX_FRAME_BYTES` bleibt: 32768 Rohbytes ergeben 43692 base64-Zeichen, der Rest ist Envelope.
+
+`FILE_MAX_DOWNLOAD_BYTES` ist serverseitig konfigurierbar. Das Geraet erzwingt zusaetzlich sein
+eigenes Limit; der kleinere Wert gewinnt.
 
 Rate Limits (Token Bucket, pro IP und pro Prinzipal):
 
@@ -409,6 +585,8 @@ Rate Limits (Token Bucket, pro IP und pro Prinzipal):
 | `POST /pairing/lookup` | 10 / 10 min |
 | `POST /pairing/{id}/status` | 120 / 10 min |
 | `POST /pairing/{id}/claim` | 10 / 10 min |
+| `POST /devices/{id}/files/session` | 30 / 10 min |
+| `GET /devices/{id}/files/content` | 60 / 10 min |
 | sonstige `/api/v1` | 600 / 10 min |
 
 ## 12. Logging
@@ -416,10 +594,16 @@ Rate Limits (Token Bucket, pro IP und pro Prinzipal):
 Erlaubt: `deviceId`, `sessionId`, `requestId`, `pairingId`, Ereignistyp, Fehlercode, Zeitstempel.
 
 Verboten: PIN, Pairing-Ticket, `deviceSecret`, `deviceToken`, Session-Cookie,
-`Authorization`-Header, private Schluessel, Dateiinhalte, Bildschirmframes, Passwoerter.
+`Authorization`-Header, private Schluessel, Dateiinhalte, Dateinamen, `fileId`-Werte,
+Share-Anzeigenamen, Bildschirmframes, Passwoerter.
 
 ## 13. Noch nicht Teil von v1
 
-`files.read`, `media.*`, `screen.view`, `screen.control` und `clipboard.*` sind reserviert,
-aber nicht implementiert. Remote-Input (`screen.control`) wird erst nach aktualisiertem
-Threat Model aktiviert und transportiert niemals Shell-Kommandos oder beliebige Codeausfuehrung.
+`media.*`, `screen.view`, `screen.control` und `clipboard.*` sind reserviert, aber nicht
+implementiert. Remote-Input (`screen.control`) wird erst nach aktualisiertem Threat Model
+aktiviert und transportiert niemals Shell-Kommandos oder beliebige Codeausfuehrung.
+
+`files.read` ist implementiert, aber bewusst **nur lesend**. Schreibende Dateioperationen
+(`delete`, `rename`, `write`, `upload`, `execute`) sind kein Bestandteil von v1 und haben keinen
+reservierten Nachrichtentyp: sie brauchen ein eigenes Threat Model und einen eigenen
+Freigabepfad.
