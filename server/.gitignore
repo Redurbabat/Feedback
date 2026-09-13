@@ -1,0 +1,6 @@
+# Lokale Laufzeitdaten des Servers (SQLite-Dateien, WAL/SHM)
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
