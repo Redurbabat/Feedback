@@ -6,12 +6,16 @@ plugins {
 
 android {
     namespace = "com.redurbabat.feedback"
-    compileSdk = 37
+    compileSdk {
+        version = release(36) {
+            minorApiLevel = 1
+        }
+    }
 
     defaultConfig {
         applicationId = "com.redurbabat.feedback"
         minSdk = 24
-        targetSdk = 37
+        targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
     }
