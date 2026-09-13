@@ -1,5 +1,6 @@
 package com.redurbabat.feedback.agent
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,6 +8,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
@@ -142,6 +144,7 @@ class BackgroundAgentService : Service() {
 
                     AgentConnectionState.REVOKED -> {
                         backgroundStore.setEnabled(false)
+                        localCapabilities.clear()
                         reconnectJob?.cancel()
                         reconnectJob = null
                         stopSelf()
@@ -270,6 +273,17 @@ class BackgroundAgentService : Service() {
         /** Starts only after an explicit visible-app action by the owner. */
         fun start(context: Context) {
             val appContext = context.applicationContext
+            val notificationsVisible =
+                Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                    ContextCompat.checkSelfPermission(
+                        appContext,
+                        Manifest.permission.POST_NOTIFICATIONS,
+                    ) == PackageManager.PERMISSION_GRANTED
+            if (!notificationsVisible) {
+                BackgroundConnectionStore(appContext).setEnabled(false)
+                throw SecurityException("Notification permission is required for background mode")
+            }
+
             BackgroundConnectionStore(appContext).setEnabled(true)
             val intent = Intent(appContext, BackgroundAgentService::class.java).apply {
                 action = ACTION_START
