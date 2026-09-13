@@ -1,6 +1,7 @@
 package com.redurbabat.feedback.ui
 
 import android.content.Context
+import android.os.SystemClock
 import com.redurbabat.feedback.agent.AgentConnectionState
 import com.redurbabat.feedback.agent.BackgroundAgentService
 import com.redurbabat.feedback.agent.BackgroundConnectionStore
@@ -17,8 +18,13 @@ import com.redurbabat.feedback.pairing.ServerPairingStatus
 import com.redurbabat.feedback.permissions.LocalCapabilityStore
 import com.redurbabat.feedback.protocol.Capability
 import com.redurbabat.feedback.security.AppLockPolicy
+import com.redurbabat.feedback.security.AppLockReauthPolicy
+import com.redurbabat.feedback.security.AppLockSettings
 import com.redurbabat.feedback.security.AppLockStore
 import com.redurbabat.feedback.security.AppUnlockResult
+import com.redurbabat.feedback.security.AutoLockPolicy
+import com.redurbabat.feedback.security.AutoLockTimeout
+import com.redurbabat.feedback.security.SensitiveAction
 import com.redurbabat.feedback.security.DeviceIdentity
 import com.redurbabat.feedback.security.DeviceIdentityStore
 import com.redurbabat.feedback.security.DeviceRegistrationStore
@@ -66,8 +72,17 @@ data class FeedbackUiState(
     val appLockConfigured: Boolean = false,
     val appUnlocked: Boolean = false,
     val appLockBusy: Boolean = false,
-    val appLockoutUntilEpochMillis: Long? = null,
+    val appLockFailedAttempts: Int = 0,
+    val appLockRemainingLockoutMillis: Long = 0L,
     val appLockError: String? = null,
+    val appLockUnavailable: Boolean = false,
+    val appLockSetupDeferred: Boolean = false,
+    val autoLockTimeout: AutoLockTimeout = AutoLockTimeout.DEFAULT,
+    val biometricUnlockEnabled: Boolean = false,
+    val biometricUnlockAvailable: Boolean = false,
+    val pendingSensitiveAction: SensitiveAction? = null,
+    val sensitiveActionBusy: Boolean = false,
+    val sensitiveActionError: String? = null,
     val globalMessage: String? = null,
 )
 
@@ -82,7 +97,10 @@ data class FeedbackUiState(
  * The management UI itself is fail-closed behind an app-specific PIN/passphrase. Its verifier is
  * Keystore-sealed and failed attempts are persistently rate-limited.
  */
-class FeedbackController(context: Context) {
+class FeedbackController(
+    context: Context,
+    private val elapsedRealtime: () -> Long = SystemClock::elapsedRealtime,
+) {
     private val applicationContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val identityStore = DeviceIdentityStore()
@@ -100,26 +118,40 @@ class FeedbackController(context: Context) {
     private var pairingJob: Job? = null
     private var agentStateJob: Job? = null
     private var appLockJob: Job? = null
+    private var lockoutCountdownJob: Job? = null
     private var agent: DeviceAgentClient? = null
     private val closed = AtomicBoolean(false)
+
+    /**
+     * Monotonic timestamps. The wall clock is user settable, so auto-lock and the
+     * re-authentication window are never anchored to it.
+     */
+    private var lastAuthenticatedAtElapsedMillis: Long? = null
+    private var backgroundedAtElapsedMillis: Long? = null
 
     init {
         initialize()
     }
+
+    // ---------------------------------------------------------------- app lock
 
     fun configureAppLock(secret: String, confirmation: String) {
         if (_state.value.appLockBusy || _state.value.appLockConfigured || closed.get()) {
             return
         }
         if (secret != confirmation) {
-            _state.value = _state.value.copy(appLockError = "Die beiden Eingaben stimmen nicht überein.")
+            _state.value = _state.value.copy(
+                appLockError = "Die beiden Eingaben stimmen nicht überein.",
+            )
             return
         }
         val secretChars = secret.toCharArray()
         if (!AppLockPolicy.isAcceptableSecret(secretChars)) {
             secretChars.fill('\u0000')
             _state.value = _state.value.copy(
-                appLockError = "Verwende mindestens 6 Ziffern oder eine Passphrase mit mindestens 8 Zeichen.",
+                appLockError = "Verwende mindestens ${AppLockPolicy.MIN_PIN_DIGITS} Ziffern " +
+                    "oder eine Passphrase mit mindestens " +
+                    "${AppLockPolicy.MIN_PASSPHRASE_LENGTH} Zeichen.",
             )
             return
         }
@@ -131,19 +163,23 @@ class FeedbackController(context: Context) {
                 withContext(Dispatchers.Default) {
                     try {
                         appLockStore.configure(secretChars)
+                        appLockStore.writeSettings(AppLockSettings.DEFAULT)
                     } finally {
                         secretChars.fill('\u0000')
                     }
                 }
             }
             _state.value = if (result.isSuccess) {
+                markAuthenticated()
                 _state.value.copy(
                     appLockConfigured = true,
                     appUnlocked = true,
                     appLockBusy = false,
-                    appLockoutUntilEpochMillis = null,
+                    appLockFailedAttempts = 0,
+                    appLockRemainingLockoutMillis = 0L,
                     appLockError = null,
-                    globalMessage = "App-Schutz eingerichtet.",
+                    autoLockTimeout = AppLockSettings.DEFAULT.autoLockTimeout,
+                    biometricUnlockEnabled = AppLockSettings.DEFAULT.biometricUnlockEnabled,
                 )
             } else {
                 _state.value.copy(
@@ -154,12 +190,44 @@ class FeedbackController(context: Context) {
         }
     }
 
+    /** The owner postponed the setup. Nothing is unlocked by this; only the prompt is silenced. */
+    fun deferAppLockSetup() {
+        if (_state.value.appLockConfigured || closed.get()) {
+            return
+        }
+        runCatching { appLockStore.setSetupDeferred(true) }
+        _state.value = _state.value.copy(
+            appLockSetupDeferred = true,
+            appLockError = null,
+            globalMessage = "Ohne App-Schutz ist die Geräteverwaltung auf einem entsperrten " +
+                "Telefon frei zugänglich. Du kannst ihn jederzeit unter Sicherheit aktivieren.",
+        )
+    }
+
+    /** Opens the setup screen again after it was postponed or the lock was disabled. */
+    fun startAppLockSetup() {
+        if (_state.value.appLockConfigured || closed.get()) {
+            return
+        }
+        runCatching { appLockStore.setSetupDeferred(false) }
+        _state.value = _state.value.copy(
+            appLockSetupDeferred = false,
+            appLockError = null,
+            globalMessage = null,
+        )
+    }
+
     fun unlockApp(secret: String) {
-        if (!_state.value.appLockConfigured || _state.value.appUnlocked || _state.value.appLockBusy || closed.get()) {
+        val current = _state.value
+        if (!current.appLockConfigured ||
+            current.appUnlocked ||
+            current.appLockBusy ||
+            closed.get()
+        ) {
             return
         }
         val secretChars = secret.toCharArray()
-        _state.value = _state.value.copy(appLockBusy = true, appLockError = null)
+        _state.value = current.copy(appLockBusy = true, appLockError = null)
         appLockJob?.cancel()
         appLockJob = scope.launch {
             val result = runCatching {
@@ -171,58 +239,361 @@ class FeedbackController(context: Context) {
                     }
                 }
             }
-            val unlock = result.getOrNull()
-            _state.value = when (unlock) {
-                AppUnlockResult.Success -> _state.value.copy(
+            applyUnlockResult(result.getOrNull())
+        }
+    }
+
+    /**
+     * Completes an unlock that a successful BiometricPrompt already authorised. Biometrics are a
+     * convenience path on top of an existing PIN/passphrase: they apply only when the owner enabled
+     * them, and they never clear an active lockout.
+     */
+    fun unlockWithBiometrics() {
+        val current = _state.value
+        if (!current.appLockConfigured || current.appUnlocked || closed.get()) {
+            return
+        }
+        if (!current.biometricUnlockEnabled || !current.biometricUnlockAvailable) {
+            return
+        }
+        val now = System.currentTimeMillis()
+        val status = runCatching { appLockStore.status(now) }.getOrNull()
+        val remaining = status?.lockout?.remainingMillis(now) ?: 0L
+        if (remaining > 0L) {
+            _state.value = current.copy(appLockRemainingLockoutMillis = remaining)
+            startLockoutCountdown()
+            return
+        }
+        markAuthenticated()
+        _state.value = current.copy(
+            appUnlocked = true,
+            appLockBusy = false,
+            appLockFailedAttempts = 0,
+            appLockRemainingLockoutMillis = 0L,
+            appLockError = null,
+        )
+    }
+
+    fun reportBiometricUnlockFailed(message: String?) {
+        if (_state.value.appUnlocked) {
+            return
+        }
+        _state.value = _state.value.copy(
+            appLockError = message ?: "Die biometrische Entsperrung wurde abgebrochen.",
+        )
+    }
+
+    /** Reported by the UI once it knows whether this device can actually prompt for biometrics. */
+    fun setBiometricUnlockAvailable(available: Boolean) {
+        if (_state.value.biometricUnlockAvailable == available) {
+            return
+        }
+        _state.value = _state.value.copy(biometricUnlockAvailable = available)
+    }
+
+    fun setBiometricUnlockEnabled(enabled: Boolean) {
+        val current = _state.value
+        if (!current.appUnlocked || !current.appLockConfigured || closed.get()) {
+            return
+        }
+        if (enabled && !current.biometricUnlockAvailable) {
+            _state.value = current.copy(
+                globalMessage = "Dieses Gerät bietet keine nutzbare biometrische Entsperrung an.",
+            )
+            return
+        }
+        writeSettings(
+            AppLockSettings(
+                autoLockTimeout = current.autoLockTimeout,
+                biometricUnlockEnabled = enabled,
+            ),
+        )
+    }
+
+    fun setAutoLockTimeout(timeout: AutoLockTimeout) {
+        val current = _state.value
+        if (!current.appUnlocked || !current.appLockConfigured || closed.get()) {
+            return
+        }
+        writeSettings(
+            AppLockSettings(
+                autoLockTimeout = timeout,
+                biometricUnlockEnabled = current.biometricUnlockEnabled,
+            ),
+        )
+    }
+
+    private fun writeSettings(settings: AppLockSettings) {
+        runCatching { appLockStore.writeSettings(settings) }
+            .onSuccess {
+                _state.value = _state.value.copy(
+                    autoLockTimeout = settings.autoLockTimeout,
+                    biometricUnlockEnabled = settings.biometricUnlockEnabled,
+                )
+            }
+            .onFailure {
+                _state.value = _state.value.copy(
+                    globalMessage = "Die Einstellung konnte nicht sicher gespeichert werden.",
+                )
+            }
+    }
+
+    fun lockApp() {
+        if (_state.value.appLockConfigured && _state.value.appUnlocked) {
+            lastAuthenticatedAtElapsedMillis = null
+            _state.value = _state.value.copy(
+                appUnlocked = false,
+                appLockBusy = false,
+                appLockError = null,
+                pendingSensitiveAction = null,
+                sensitiveActionError = null,
+                sensitiveActionBusy = false,
+            )
+            refreshLockoutFromStore()
+        }
+    }
+
+    /** Called when the app leaves the foreground; starts the auto-lock idle window. */
+    fun onEnterBackground() {
+        if (!_state.value.appUnlocked) {
+            return
+        }
+        backgroundedAtElapsedMillis = elapsedRealtime()
+        if (_state.value.autoLockTimeout == AutoLockTimeout.IMMEDIATE) {
+            lockApp()
+        }
+    }
+
+    /** Called when the app returns to the foreground; applies the auto-lock decision. */
+    fun onEnterForeground() {
+        val backgroundedAt = backgroundedAtElapsedMillis ?: return
+        backgroundedAtElapsedMillis = null
+        if (!_state.value.appUnlocked) {
+            return
+        }
+        val shouldLock = AutoLockPolicy.shouldLockAfterBackground(
+            timeout = _state.value.autoLockTimeout,
+            backgroundedAtElapsedMillis = backgroundedAt,
+            nowElapsedMillis = elapsedRealtime(),
+        )
+        if (shouldLock) {
+            lockApp()
+        }
+    }
+
+    // ------------------------------------------------- sensitive local actions
+
+    /**
+     * Requests a sensitive action. When the last unlock is too old - or when the action never
+     * accepts a recent unlock - the UI asks for the secret again instead of running straight away.
+     */
+    fun requestSensitiveAction(action: SensitiveAction) {
+        val current = _state.value
+        if (!current.appUnlocked || closed.get()) {
+            return
+        }
+        if (action == SensitiveAction.DISABLE_APP_LOCK && !current.appLockConfigured) {
+            return
+        }
+        val needsSecret = current.appLockConfigured && AppLockReauthPolicy.requiresReauthentication(
+            action = action,
+            lastAuthenticatedAtElapsedMillis = lastAuthenticatedAtElapsedMillis,
+            nowElapsedMillis = elapsedRealtime(),
+        )
+        if (needsSecret) {
+            _state.value = current.copy(
+                pendingSensitiveAction = action,
+                sensitiveActionError = null,
+                globalMessage = null,
+            )
+        } else {
+            runSensitiveAction(action)
+        }
+    }
+
+    fun cancelSensitiveAction() {
+        _state.value = _state.value.copy(
+            pendingSensitiveAction = null,
+            sensitiveActionError = null,
+            sensitiveActionBusy = false,
+        )
+    }
+
+    fun confirmSensitiveAction(secret: String) {
+        val current = _state.value
+        val action = current.pendingSensitiveAction ?: return
+        if (current.sensitiveActionBusy || !current.appUnlocked || closed.get()) {
+            return
+        }
+        val secretChars = secret.toCharArray()
+        _state.value = current.copy(sensitiveActionBusy = true, sensitiveActionError = null)
+        appLockJob?.cancel()
+        appLockJob = scope.launch {
+            val now = System.currentTimeMillis()
+            val result = runCatching {
+                withContext(Dispatchers.Default) {
+                    try {
+                        if (action == SensitiveAction.DISABLE_APP_LOCK) {
+                            appLockStore.disable(secretChars, now)
+                        } else {
+                            appLockStore.verify(secretChars, now)
+                        }
+                    } finally {
+                        secretChars.fill('\u0000')
+                    }
+                }
+            }
+
+            when (val outcome = result.getOrNull()) {
+                AppUnlockResult.Success -> {
+                    markAuthenticated()
+                    _state.value = _state.value.copy(
+                        pendingSensitiveAction = null,
+                        sensitiveActionBusy = false,
+                        sensitiveActionError = null,
+                    )
+                    runSensitiveAction(action)
+                }
+
+                is AppUnlockResult.Invalid -> {
+                    _state.value = _state.value.copy(
+                        sensitiveActionBusy = false,
+                        appLockFailedAttempts = outcome.failedAttempts,
+                        sensitiveActionError = invalidSecretMessage(outcome.failedAttempts),
+                    )
+                    // A failure that triggered the rate limit also drops back to the lock screen,
+                    // so the wait cannot be sat out inside an already unlocked session.
+                    if (outcome.lockout.isActive) {
+                        lockApp()
+                    }
+                }
+
+                is AppUnlockResult.Locked -> {
+                    _state.value = _state.value.copy(sensitiveActionBusy = false)
+                    lockApp()
+                }
+
+                AppUnlockResult.NotConfigured, null -> {
+                    _state.value = _state.value.copy(
+                        sensitiveActionBusy = false,
+                        sensitiveActionError = "Die Eingabe konnte nicht geprüft werden.",
+                    )
+                }
+            }
+        }
+    }
+
+    private fun runSensitiveAction(action: SensitiveAction) {
+        when (action) {
+            SensitiveAction.DISABLE_APP_LOCK -> {
+                // disable() already removed the verifier when the secret was correct.
+                lastAuthenticatedAtElapsedMillis = null
+                runCatching { appLockStore.setSetupDeferred(true) }
+                _state.value = _state.value.copy(
+                    appLockConfigured = false,
+                    appUnlocked = true,
+                    appLockFailedAttempts = 0,
+                    appLockRemainingLockoutMillis = 0L,
+                    autoLockTimeout = AppLockSettings.DEFAULT.autoLockTimeout,
+                    biometricUnlockEnabled = false,
+                    appLockSetupDeferred = true,
+                    globalMessage = "App-Schutz deaktiviert. Die Geräteverwaltung ist jetzt ohne " +
+                        "lokale Eingabe erreichbar.",
+                )
+            }
+
+            SensitiveAction.FORGET_REGISTRATION -> forgetLocalRegistrationConfirmed()
+            SensitiveAction.GRANT_SYSTEM_INFO -> applySystemInfoGrant(true)
+        }
+    }
+
+    // ------------------------------------------------------------- lock helpers
+
+    private fun applyUnlockResult(outcome: AppUnlockResult?) {
+        val now = System.currentTimeMillis()
+        _state.value = when (outcome) {
+            AppUnlockResult.Success -> {
+                markAuthenticated()
+                _state.value.copy(
                     appUnlocked = true,
                     appLockBusy = false,
-                    appLockoutUntilEpochMillis = null,
+                    appLockFailedAttempts = 0,
+                    appLockRemainingLockoutMillis = 0L,
                     appLockError = null,
                 )
+            }
 
-                AppUnlockResult.NotConfigured -> _state.value.copy(
-                    appLockConfigured = false,
-                    appUnlocked = false,
-                    appLockBusy = false,
-                    appLockoutUntilEpochMillis = null,
-                    appLockError = "Die App-Sperre muss neu eingerichtet werden.",
-                )
+            AppUnlockResult.NotConfigured -> _state.value.copy(
+                appLockConfigured = false,
+                appUnlocked = false,
+                appLockBusy = false,
+                appLockRemainingLockoutMillis = 0L,
+                appLockError = "Die App-Sperre muss neu eingerichtet werden.",
+            )
 
-                is AppUnlockResult.Invalid -> _state.value.copy(
-                    appUnlocked = false,
-                    appLockBusy = false,
-                    appLockoutUntilEpochMillis = unlock.lockoutUntilEpochMillis,
-                    appLockError = if (unlock.lockoutUntilEpochMillis == null) {
-                        "PIN oder Passphrase ist falsch."
-                    } else {
-                        "Zu viele Fehlversuche. Die App-Sperre ist vorübergehend blockiert."
-                    },
-                )
+            is AppUnlockResult.Invalid -> _state.value.copy(
+                appUnlocked = false,
+                appLockBusy = false,
+                appLockFailedAttempts = outcome.failedAttempts,
+                appLockRemainingLockoutMillis = outcome.lockout.remainingMillis(now),
+                appLockError = invalidSecretMessage(outcome.failedAttempts),
+            )
 
-                is AppUnlockResult.Locked -> _state.value.copy(
-                    appUnlocked = false,
-                    appLockBusy = false,
-                    appLockoutUntilEpochMillis = unlock.lockoutUntilEpochMillis,
-                    appLockError = "Zu viele Fehlversuche. Bitte später erneut versuchen.",
-                )
+            is AppUnlockResult.Locked -> _state.value.copy(
+                appUnlocked = false,
+                appLockBusy = false,
+                appLockRemainingLockoutMillis = outcome.lockout.remainingMillis(now),
+                appLockError = null,
+            )
 
-                null -> _state.value.copy(
-                    appUnlocked = false,
-                    appLockBusy = false,
-                    appLockError = "Die lokale App-Sperre konnte nicht geprüft werden.",
+            null -> _state.value.copy(
+                appUnlocked = false,
+                appLockBusy = false,
+                appLockError = "Die lokale App-Sperre konnte nicht geprüft werden.",
+            )
+        }
+        startLockoutCountdown()
+    }
+
+    private fun invalidSecretMessage(failedAttempts: Int): String {
+        val free = AppLockPolicy.remainingFreeAttempts(failedAttempts)
+        return when {
+            free > 1 -> "Falsche Eingabe. Noch $free Versuche bis zur Wartezeit."
+            free == 1 -> "Falsche Eingabe. Noch 1 Versuch bis zur Wartezeit."
+            else -> "Falsche Eingabe. Zu viele Fehlversuche."
+        }
+    }
+
+    private fun refreshLockoutFromStore() {
+        val now = System.currentTimeMillis()
+        val status = runCatching { appLockStore.status(now) }.getOrNull() ?: return
+        _state.value = _state.value.copy(
+            appLockFailedAttempts = status.failedAttempts,
+            appLockRemainingLockoutMillis = status.lockout.remainingMillis(now),
+        )
+        startLockoutCountdown()
+    }
+
+    /** Ticks the visible "erneut versuchen in mm:ss" countdown down to zero. */
+    private fun startLockoutCountdown() {
+        lockoutCountdownJob?.cancel()
+        if (_state.value.appLockRemainingLockoutMillis <= 0L) {
+            return
+        }
+        lockoutCountdownJob = scope.launch {
+            while (_state.value.appLockRemainingLockoutMillis > 0L && !closed.get()) {
+                delay(LOCKOUT_TICK_MILLIS)
+                val now = System.currentTimeMillis()
+                val status = runCatching { appLockStore.status(now) }.getOrNull()
+                _state.value = _state.value.copy(
+                    appLockRemainingLockoutMillis = status?.lockout?.remainingMillis(now) ?: 0L,
                 )
             }
         }
     }
 
-    fun lockApp() {
-        if (_state.value.appLockConfigured && _state.value.appUnlocked) {
-            _state.value = _state.value.copy(
-                appUnlocked = false,
-                appLockBusy = false,
-                appLockError = null,
-            )
-        }
+    private fun markAuthenticated() {
+        lastAuthenticatedAtElapsedMillis = elapsedRealtime()
     }
 
     fun setServerUrl(value: String) {
@@ -304,6 +675,18 @@ class FeedbackController(context: Context) {
     }
 
     fun setSystemInfoGranted(granted: Boolean) {
+        if (!_state.value.appUnlocked || !_state.value.paired) {
+            return
+        }
+        if (granted) {
+            // Handing out a capability is gated; withdrawing one never is.
+            requestSensitiveAction(SensitiveAction.GRANT_SYSTEM_INFO)
+        } else {
+            applySystemInfoGrant(false)
+        }
+    }
+
+    private fun applySystemInfoGrant(granted: Boolean) {
         if (!_state.value.appUnlocked || !_state.value.paired) {
             return
         }
@@ -398,6 +781,10 @@ class FeedbackController(context: Context) {
      * untouched; owners should use the Control Center revoke action when they want global revoke.
      */
     fun forgetLocalRegistration() {
+        requestSensitiveAction(SensitiveAction.FORGET_REGISTRATION)
+    }
+
+    private fun forgetLocalRegistrationConfirmed() {
         if (!_state.value.appUnlocked) {
             return
         }
@@ -438,6 +825,7 @@ class FeedbackController(context: Context) {
         pairingJob?.cancel()
         agentStateJob?.cancel()
         appLockJob?.cancel()
+        lockoutCountdownJob?.cancel()
         agent?.stop()
         agent = null
         scope.cancel()
@@ -447,8 +835,12 @@ class FeedbackController(context: Context) {
         val identity = runCatching { identityStore.loadOrCreate() }.getOrNull()
         val stored = runCatching { registrationStore.load() }.getOrNull()
         val backgroundEnabled = stored != null && backgroundStore.isEnabled()
-        val appLockConfiguredResult = runCatching { appLockStore.isConfigured() }
-        val appLockConfigured = appLockConfiguredResult.getOrDefault(true)
+        val now = System.currentTimeMillis()
+        // Fail closed: when the lock state cannot be read the UI stays locked rather than open.
+        val appLockStatusResult = runCatching { appLockStore.status(now) }
+        val appLockStatus = appLockStatusResult.getOrNull()
+        val appLockConfigured = appLockStatus?.configured ?: true
+        val settings = appLockStatus?.settings ?: AppLockSettings.DEFAULT
         _state.value = FeedbackUiState(
             identity = identity,
             identityAvailable = identity != null,
@@ -461,9 +853,17 @@ class FeedbackController(context: Context) {
             backgroundConnectionEnabled = backgroundEnabled,
             systemInfoGrantedLocally = localCapabilityStore.granted().contains(Capability.SYSTEM_INFO),
             appLockConfigured = appLockConfigured,
-            appUnlocked = false,
-            appLockError = if (appLockConfiguredResult.isFailure) {
-                "Die vorhandene App-Sperre konnte nicht sicher geladen werden. Die Oberfläche bleibt gesperrt."
+            // An unlocked session is process local and is never restored after a restart.
+            appUnlocked = AutoLockPolicy.shouldLockOnStart(appLockConfigured).not(),
+            appLockFailedAttempts = appLockStatus?.failedAttempts ?: 0,
+            appLockRemainingLockoutMillis = appLockStatus?.lockout?.remainingMillis(now) ?: 0L,
+            appLockUnavailable = appLockStatusResult.isFailure,
+            appLockSetupDeferred = appLockStatus?.setupDeferred ?: false,
+            autoLockTimeout = settings.autoLockTimeout,
+            biometricUnlockEnabled = settings.biometricUnlockEnabled,
+            appLockError = if (appLockStatusResult.isFailure) {
+                "Die vorhandene App-Sperre konnte nicht sicher geladen werden. " +
+                    "Die Oberfläche bleibt gesperrt."
             } else {
                 null
             },
@@ -473,6 +873,8 @@ class FeedbackController(context: Context) {
                 null
             },
         )
+        startLockoutCountdown()
+
         if (stored != null) {
             if (backgroundEnabled) {
                 try {
@@ -651,5 +1053,9 @@ class FeedbackController(context: Context) {
 
         is ServerPairingException -> "Die sichere Kopplung mit dem Server ist fehlgeschlagen."
         else -> "Der Server ist nicht erreichbar oder die TLS-Verbindung konnte nicht aufgebaut werden."
+    }
+
+    private companion object {
+        const val LOCKOUT_TICK_MILLIS = 500L
     }
 }

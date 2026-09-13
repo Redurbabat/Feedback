@@ -20,6 +20,25 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Auto-lock is driven from the activity lifecycle rather than from a timer, so the idle window
+     * starts exactly when the management UI stops being visible. `onStop` also covers the recents
+     * overview and the screen turning off.
+     */
+    override fun onStop() {
+        if (::controller.isInitialized) {
+            controller.onEnterBackground()
+        }
+        super.onStop()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (::controller.isInitialized) {
+            controller.onEnterForeground()
+        }
+    }
+
     override fun onDestroy() {
         if (::controller.isInitialized) {
             controller.close()

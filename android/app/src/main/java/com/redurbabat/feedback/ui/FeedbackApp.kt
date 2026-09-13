@@ -6,12 +6,14 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
@@ -21,6 +23,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -33,6 +37,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -41,6 +48,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.redurbabat.feedback.agent.AgentConnectionState
+import com.redurbabat.feedback.security.AutoLockTimeout
+import com.redurbabat.feedback.security.SensitiveAction
 import com.redurbabat.feedback.security.DeviceIdentity
 
 @Composable
@@ -75,16 +84,47 @@ fun FeedbackApp(controller: FeedbackController) {
 
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
-            HomeScreen(
+            when {
+                // Fail closed: a configured lock always wins over any other screen.
+                state.appLockConfigured && !state.appUnlocked -> AppLockUnlockScreen(
+                    state = state,
+                    onUnlock = controller::unlockApp,
+                    onBiometricUnlock = controller::unlockWithBiometrics,
+                )
+
+                !state.appLockConfigured && !state.appLockSetupDeferred -> AppLockSetupScreen(
+                    state = state,
+                    onConfigure = controller::configureAppLock,
+                    onDefer = controller::deferAppLockSetup,
+                )
+
+                else -> HomeScreen(
+                    state = state,
+                    onServerUrlChanged = controller::setServerUrl,
+                    onStartPairing = controller::startPairing,
+                    onCancelPairing = controller::cancelPairing,
+                    onSystemInfoChanged = controller::setSystemInfoGranted,
+                    onBackgroundConnectionChanged = onBackgroundConnectionChanged,
+                    onReconnect = controller::reconnectAgent,
+                    onForgetLocalRegistration = controller::forgetLocalRegistration,
+                    onClearMessage = controller::clearMessage,
+                    onLockNow = controller::lockApp,
+                    onStartAppLockSetup = controller::startAppLockSetup,
+                    onAutoLockTimeoutChanged = controller::setAutoLockTimeout,
+                    onBiometricUnlockChanged = controller::setBiometricUnlockEnabled,
+                    onDisableAppLock = {
+                        controller.requestSensitiveAction(SensitiveAction.DISABLE_APP_LOCK)
+                    },
+                )
+            }
+        }
+
+        state.pendingSensitiveAction?.let { action ->
+            SensitiveActionDialog(
+                action = action,
                 state = state,
-                onServerUrlChanged = controller::setServerUrl,
-                onStartPairing = controller::startPairing,
-                onCancelPairing = controller::cancelPairing,
-                onSystemInfoChanged = controller::setSystemInfoGranted,
-                onBackgroundConnectionChanged = onBackgroundConnectionChanged,
-                onReconnect = controller::reconnectAgent,
-                onForgetLocalRegistration = controller::forgetLocalRegistration,
-                onClearMessage = controller::clearMessage,
+                onConfirm = controller::confirmSensitiveAction,
+                onDismiss = controller::cancelSensitiveAction,
             )
         }
     }
@@ -101,6 +141,11 @@ private fun HomeScreen(
     onReconnect: () -> Unit,
     onForgetLocalRegistration: () -> Unit,
     onClearMessage: () -> Unit,
+    onLockNow: () -> Unit,
+    onStartAppLockSetup: () -> Unit,
+    onAutoLockTimeoutChanged: (AutoLockTimeout) -> Unit,
+    onBiometricUnlockChanged: (Boolean) -> Unit,
+    onDisableAppLock: () -> Unit,
 ) {
     val busy = state.pairing is PairingUiPhase.Starting ||
         state.pairing is PairingUiPhase.Waiting ||
@@ -150,6 +195,14 @@ private fun HomeScreen(
                 systemInfoGranted = state.systemInfoGrantedLocally,
                 onSystemInfoChanged = onSystemInfoChanged,
             )
+            AppLockCard(
+                state = state,
+                onLockNow = onLockNow,
+                onStartAppLockSetup = onStartAppLockSetup,
+                onAutoLockTimeoutChanged = onAutoLockTimeoutChanged,
+                onBiometricUnlockChanged = onBiometricUnlockChanged,
+                onDisableAppLock = onDisableAppLock,
+            )
             SecurityCard()
             LocalRemovalCard(onForgetLocalRegistration = onForgetLocalRegistration)
         } else {
@@ -159,6 +212,14 @@ private fun HomeScreen(
                 onServerUrlChanged = onServerUrlChanged,
                 onStartPairing = onStartPairing,
                 onCancelPairing = onCancelPairing,
+            )
+            AppLockCard(
+                state = state,
+                onLockNow = onLockNow,
+                onStartAppLockSetup = onStartAppLockSetup,
+                onAutoLockTimeoutChanged = onAutoLockTimeoutChanged,
+                onBiometricUnlockChanged = onBiometricUnlockChanged,
+                onDisableAppLock = onDisableAppLock,
             )
             SecurityCard()
         }
@@ -466,6 +527,148 @@ private fun CapabilityCard(
                     onCheckedChange = onSystemInfoChanged,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun AppLockCard(
+    state: FeedbackUiState,
+    onLockNow: () -> Unit,
+    onStartAppLockSetup: () -> Unit,
+    onAutoLockTimeoutChanged: (AutoLockTimeout) -> Unit,
+    onBiometricUnlockChanged: (Boolean) -> Unit,
+    onDisableAppLock: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (state.appLockConfigured) {
+                MaterialTheme.colorScheme.surfaceContainerLow
+            } else {
+                MaterialTheme.colorScheme.errorContainer
+            },
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = "App-Schutz",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+
+            if (state.appLockConfigured) {
+                Text(
+                    text = "PIN oder Passphrase schützt diese Oberfläche. Der Verifier liegt " +
+                        "Keystore-versiegelt auf dem Gerät; die Eingabe selbst wird nie " +
+                        "gespeichert.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                AutoLockSelector(
+                    selected = state.autoLockTimeout,
+                    onSelected = onAutoLockTimeoutChanged,
+                )
+
+                HorizontalDivider()
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Biometrie",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            text = if (state.biometricUnlockAvailable) {
+                                "Komfortabler Entsperrweg. PIN oder Passphrase bleibt notwendig."
+                            } else {
+                                "Auf diesem Gerät nicht eingerichtet."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = state.biometricUnlockEnabled,
+                        onCheckedChange = onBiometricUnlockChanged,
+                        enabled = state.biometricUnlockAvailable,
+                    )
+                }
+
+                HorizontalDivider()
+
+                OutlinedButton(onClick = onLockNow, modifier = Modifier.fillMaxWidth()) {
+                    Text("Jetzt sperren")
+                }
+                TextButton(onClick = onDisableAppLock, modifier = Modifier.fillMaxWidth()) {
+                    Text("App-Schutz deaktivieren")
+                }
+            } else {
+                Text(
+                    text = "Kein lokaler App-Schutz aktiv. Jede Person mit Zugriff auf das " +
+                        "entsperrte Telefon kann diese Geräteverwaltung öffnen.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Button(onClick = onStartAppLockSetup, modifier = Modifier.fillMaxWidth()) {
+                    Text("App-Schutz einrichten")
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Auto-lock picker. Uses a plain anchored [DropdownMenu] rather than `ExposedDropdownMenuBox`,
+ * whose anchor API has changed repeatedly between Material3 releases.
+ */
+@Composable
+private fun AutoLockSelector(
+    selected: AutoLockTimeout,
+    onSelected: (AutoLockTimeout) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            text = "Automatisch sperren nach",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Box {
+            OutlinedButton(
+                onClick = { expanded = true },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp),
+            ) {
+                Text(selected.label)
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                AutoLockTimeout.entries.forEach { timeout ->
+                    DropdownMenuItem(
+                        text = { Text(timeout.label) },
+                        onClick = {
+                            expanded = false
+                            onSelected(timeout)
+                        },
+                    )
+                }
+            }
+        }
+        if (selected == AutoLockTimeout.NEVER) {
+            Text(
+                text = "Nie hält die Oberfläche bis zum Beenden der App entsperrt.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
         }
     }
 }
