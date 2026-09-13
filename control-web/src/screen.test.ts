@@ -198,3 +198,13 @@ describe('presentation', () => {
     expect(hasVideoDecoder({ VideoDecoder: class {} })).toBe(true);
   });
 });
+
+describe('decodeBase64 canonical form', () => {
+  it('refuses two spellings of the same bytes', () => {
+    // atob accepts both: in a padded group the last character carries bits that must be zero,
+    // and it discards them. Two wire strings meaning one frame is exactly the ambiguity the
+    // server refuses on its side.
+    expect(decodeBase64('5RGlCnk=')).not.toBeNull();
+    expect(decodeBase64('5RGlCnn=')).toBeNull();
+  });
+});

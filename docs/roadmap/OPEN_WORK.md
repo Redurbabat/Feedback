@@ -94,7 +94,7 @@ Hardware tatsaechlich benutzt.
 | 4 Media (`media.photos.read`, `media.videos.read`, Photo Picker) | implementiert auf allen drei Seiten, nicht auf Hardware getestet |
 | 5 Screen View (`screen.view`, MediaProjection, MediaCodec, Strom ueber die Agent-Verbindung) | auf allen drei Seiten implementiert, nicht auf Hardware getestet - siehe Abschnitt 4 |
 | 6 Remote Control (`screen.control`, AccessibilityService, Input-Protokoll) | nicht begonnen |
-| 7 Hardening (Fuzzing, Dependency Audit, Batterie-Review) | Threat Model steht, Rest nicht begonnen |
+| 7 Hardening (Fuzzing, Dependency Audit, Batterie-Review) | Fuzzing und Audit erledigt, Batterie-Review offen (braucht Hardware) |
 | 8 Windows-Agent | nicht begonnen |
 
 Die Reihenfolge bleibt zwingend: Files → Media → Screen View → Remote Control. Bildschirm- und
@@ -121,6 +121,40 @@ MediaProjection, MediaCodec, der Vordergrunddienst und die Einwilligungs-Activit
 Benachrichtigung wirklich nicht wischbar ist, ob der Stop-Knopf die Projektion sofort beendet und
 ob der Encoder auf einem bestimmten Chipsatz die gewaehlte Aufloesung annimmt, weiss erst ein
 Geraetetest.
+
+### Milestone 7, Stand im Detail
+
+**Fuzzing: erledigt.** `server/test/protocol/fuzz.test.ts` faehrt beide Hubs mit tausenden
+zufaelligen Operationsfolgen und prueft nach jedem Schritt Invarianten: nie mehr Stroeme als
+erlaubt, ein Betrachter wird genau einmal beendet, ausgelieferte Sequenzen steigen streng, kein
+Delta-Frame erreicht einen Dekoder ohne Keyframe, und ein Transfer reicht nie mehr Bytes durch
+als erlaubt. `control-web/src/screen.fuzz.test.ts` zerschneidet SSE-Stroeme an zufaelligen
+Stellen und verlangt dasselbe Ergebnis.
+
+Die Generatoren sind **absichtlich auf gueltigen Verkehr vorgespannt**, und das ist eine
+Erkenntnis fuer sich: die erste Fassung war rein zufaellig, sah gruendlich aus und erreichte fast
+nichts - jeder Strom starb am ersten fehlerhaften Frame, danach prueften alle Invarianten einen
+leeren Hub. Gefunden hat das eine Abdeckungszusicherung am Ende jedes Laufs ("es wurde ueberhaupt
+ein Frame ausgeliefert"), nicht ein Mensch beim Lesen.
+
+Zwei Ergebnisse:
+
+- Der Hub-Fuzzer faengt eine absichtlich eingebaute Regression (Delta-Frames ohne Keyframe
+  ausliefern) - geprueft, nicht angenommen.
+- Der Parser-Fuzzer hat einen **echten Fehler** gefunden: `atob` akzeptiert nicht-kanonisches
+  base64, sodass `5RGlCnn=` und `5RGlCnk=` dieselben Bytes ergeben. Zwei verschiedene Zeichenketten
+  auf der Leitung waeren also derselbe Frame gewesen. Der Server wies das auf seiner Seite schon
+  ab; der Browser tut es jetzt auch.
+
+**Dependency Audit: erledigt.** `npm audit` fuer Server und Control Web meldet null
+Schwachstellen (Stand 2026-09-13). `.github/workflows/dependency-audit.yml` laeuft woechentlich
+und bricht ab "high" ab - eine Schwachstelle wird veroeffentlicht, wenn sie veroeffentlicht wird,
+nicht wenn hier jemand committet. Fuer Android gibt es kein Aequivalent in dieser Aufstellung;
+die Abhaengigkeiten dort sind AndroidX, OkHttp und Compose.
+
+**Batterie-Review: offen.** Nicht ohne Hardware machbar. Was zu messen waere: der Dauerverbrauch
+der Hintergrundverbindung im Leerlauf, und der einer laufenden Bildschirmuebertragung - bei
+15 fps und 2500 kbit/s ueber Mobilfunk ist das die teuerste Sache, die diese App tut.
 
 ## 4. Bekannte technische Schulden
 

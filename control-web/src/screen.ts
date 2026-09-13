@@ -205,21 +205,36 @@ export function isSupportedCodec(codec: string): boolean {
   return /^avc1\.[0-9A-Fa-f]{6}$/u.test(codec);
 }
 
-/** Null when the string is not valid base64, rather than a silently shortened buffer. */
+/**
+ * Null when the string is not valid base64, rather than a silently shortened buffer.
+ *
+ * The re-encode is not belt and braces. `atob` accepts non-canonical base64: in a padded group
+ * the last character carries bits that must be zero, and `atob` throws them away instead of
+ * complaining. So "5RGlCnn=" and "5RGlCnk=" decode to the same bytes, and two different frames on
+ * the wire would become one picture. The server already refuses that on its side; this is the
+ * same rule, so both ends agree on what a frame *is*.
+ *
+ * Found by the randomised test in screen.fuzz.test.ts, not by reading the code.
+ */
 export function decodeBase64(value: string): Uint8Array | null {
   if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(value) || value.length % 4 !== 0) {
     return null;
   }
+  let binary: string;
   try {
-    const binary = atob(value);
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) {
-      bytes[index] = binary.charCodeAt(index);
-    }
-    return bytes;
+    binary = atob(value);
   } catch {
     return null;
   }
+  // Compared as strings, so a megabyte frame does not go through a spread argument list.
+  if (btoa(binary) !== value) {
+    return null;
+  }
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
 }
 
 /** What the viewer is told while nothing is on screen yet. */
