@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AgentSocketLike } from '../../src/services/agentConnections.js';
-import { AgentConnectionRegistry } from '../../src/services/agentConnections.js';
+import {
+  AgentCapabilityUnavailableError,
+  AgentConnectionRegistry,
+  AgentOfflineError,
+  AgentRequestTimeoutError,
+} from '../../src/services/agentConnections.js';
 
 class FakeSocket implements AgentSocketLike {
   readonly sent: string[] = [];
@@ -52,14 +57,14 @@ describe('AgentConnectionRegistry', () => {
       'screen.view',
     ]);
 
-    expect(registry.snapshotsForDevice('device-a')).toEqual([
+    expect(registry.snapshot(connection.id)).toEqual(
       expect.objectContaining({
         id: connection.id,
         connectedAt: 1000,
         lastMessageAt: 2500,
         deviceGrantedCapabilities: ['screen.view', 'system.info'],
       }),
-    ]);
+    );
   });
 
   it('sends a frame to every live connection and removes a socket that throws', () => {
@@ -73,6 +78,86 @@ describe('AgentConnectionRegistry', () => {
     expect(registry.sendToDevice('device-a', '{"type":"test"}')).toBe(1);
     expect(good.sent).toEqual(['{"type":"test"}']);
     expect(registry.size).toBe(1);
+  });
+
+  it('correlates a privileged request by session id and resolves exactly once', async () => {
+    const registry = new AgentConnectionRegistry();
+    const socket = new FakeSocket();
+    const connection = registry.register('device-a', socket, 1000);
+    registry.setDeviceGrantedCapabilities(connection.id, ['system.info']);
+
+    const pending = registry.requestDevice({
+      deviceId: 'device-a',
+      sessionId: 'session-1',
+      requiredCapability: 'system.info',
+      frame: '{"type":"system.info.request"}',
+      timeoutMs: 1000,
+    });
+
+    expect(socket.sent).toEqual(['{"type":"system.info.request"}']);
+    expect(registry.pendingSize).toBe(1);
+    expect(registry.resolveResponse('other-device', 'session-1', { ok: false })).toBe(false);
+    expect(registry.resolveResponse('device-a', 'session-1', { ok: true })).toBe(true);
+    await expect(pending).resolves.toEqual({ ok: true });
+    expect(registry.pendingSize).toBe(0);
+    expect(registry.resolveResponse('device-a', 'session-1', { ok: true })).toBe(false);
+  });
+
+  it('denies a privileged request when the device did not grant the capability', async () => {
+    const registry = new AgentConnectionRegistry();
+    registry.register('device-a', new FakeSocket(), 1000);
+
+    await expect(
+      registry.requestDevice({
+        deviceId: 'device-a',
+        sessionId: 'session-1',
+        requiredCapability: 'system.info',
+        frame: '{}',
+        timeoutMs: 100,
+      }),
+    ).rejects.toBeInstanceOf(AgentCapabilityUnavailableError);
+  });
+
+  it('fails fast when the device is offline and rejects pending work on disconnect', async () => {
+    const registry = new AgentConnectionRegistry();
+    await expect(
+      registry.requestDevice({
+        deviceId: 'device-a',
+        sessionId: 'missing',
+        requiredCapability: 'system.info',
+        frame: '{}',
+        timeoutMs: 100,
+      }),
+    ).rejects.toBeInstanceOf(AgentOfflineError);
+
+    const socket = new FakeSocket();
+    const connection = registry.register('device-a', socket, 1000);
+    registry.setDeviceGrantedCapabilities(connection.id, ['system.info']);
+    const pending = registry.requestDevice({
+      deviceId: 'device-a',
+      sessionId: 'disconnecting',
+      requiredCapability: 'system.info',
+      frame: '{}',
+      timeoutMs: 1000,
+    });
+    registry.unregister(connection.id);
+    await expect(pending).rejects.toBeInstanceOf(AgentOfflineError);
+  });
+
+  it('times out unanswered requests and releases the pending slot', async () => {
+    const registry = new AgentConnectionRegistry();
+    const connection = registry.register('device-a', new FakeSocket(), 1000);
+    registry.setDeviceGrantedCapabilities(connection.id, ['system.info']);
+
+    const pending = registry.requestDevice({
+      deviceId: 'device-a',
+      sessionId: 'session-timeout',
+      requiredCapability: 'system.info',
+      frame: '{}',
+      timeoutMs: 5,
+    });
+    await expect(pending).rejects.toBeInstanceOf(AgentRequestTimeoutError);
+    expect(registry.pendingSize).toBe(0);
   });
 
   it('closes and unregisters every connection of a revoked device', () => {

@@ -18,6 +18,7 @@ export const AUDIT_EVENT_TYPES = [
   'pairing.claim',
   'device.capabilities.update',
   'device.revoke',
+  'system.info.request',
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];

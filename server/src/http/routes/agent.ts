@@ -41,6 +41,16 @@ function safeText(max: number) {
     });
 }
 
+function utcTimestamp() {
+  return z
+    .string()
+    .min(20)
+    .max(40)
+    .refine((value) => value.endsWith('Z') && Number.isFinite(Date.parse(value)), {
+      message: 'muss ein UTC-Zeitstempel sein',
+    });
+}
+
 const envelopeSchema = z
   .object({
     version: z.number().int(),
@@ -66,6 +76,32 @@ const heartbeatPayloadSchema = z.object({}).strict();
 const capabilityStatePayloadSchema = z
   .object({ grantedCapabilities: z.array(capabilitySchema).max(8) })
   .strict();
+
+const systemInfoPayloadSchema = z
+  .object({
+    manufacturer: safeText(64),
+    model: safeText(128),
+    osVersion: safeText(32),
+    sdkInt: z.number().int().min(1).max(10_000),
+    appVersion: safeText(32),
+    batteryPercent: z.number().int().min(0).max(100),
+    charging: z.boolean(),
+    storageTotalBytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    storageFreeBytes: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    networkType: z.enum(['wifi', 'cellular', 'ethernet', 'other', 'none']),
+    deviceTime: utcTimestamp(),
+    lastAgentActivity: utcTimestamp(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.storageFreeBytes > value.storageTotalBytes) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['storageFreeBytes'],
+        message: 'darf nicht groesser als storageTotalBytes sein',
+      });
+    }
+  });
 
 interface WritableSocket {
   send(data: string): void;
@@ -145,13 +181,7 @@ async function serverGrantedCapabilities(
     );
 }
 
-/**
- * Agent REST + WebSocket endpoints.
- *
- * The WebSocket is authenticated with the same bearer device token as
- * `/agent/me`. Only protocol-v1 presence/capability messages are accepted at
- * this stage; privileged requests are added separately with Remote Sessions.
- */
+/** Agent REST + WebSocket endpoints for presence and privileged responses. */
 export async function registerAgentRoutes(
   app: FastifyInstance,
   context: AppContext,
@@ -174,9 +204,7 @@ export async function registerAgentRoutes(
         pairedAt: toIso(principal.device.createdAt),
         lastSeenAt: toIso(principal.authenticatedAt),
       },
-      capabilities: {
-        serverGranted: granted,
-      },
+      capabilities: { serverGranted: granted },
       serverTime: toIso(principal.authenticatedAt),
     };
   });
@@ -190,8 +218,6 @@ export async function registerAgentRoutes(
       },
     },
     (socket, request) => {
-      // Attach listeners synchronously before doing any asynchronous work so a
-      // fast client cannot send a frame between upgrade and listener setup.
       const principal = requireDevicePrincipal(request);
       const initialNow = context.clock.now();
       const connection = context.agentConnections.register(
@@ -221,6 +247,85 @@ export async function registerAgentRoutes(
         context.agentConnections.touch(connection.id, now);
         await context.repositories.devices.touchLastSeen(principal.device.id, now);
         await context.repositories.deviceTokens.touch(principal.token.id, now);
+      };
+
+      const processSystemInfoResponse = async (
+        message: z.infer<typeof envelopeSchema>,
+        now: number,
+      ): Promise<void> => {
+        if (message.sessionId === null) {
+          sendError(
+            socket,
+            now,
+            'SESSION_EXPIRED',
+            'system.info.response benoetigt eine Remote Session',
+            message.messageId,
+          );
+          return;
+        }
+
+        const remote = await context.repositories.remoteSessions.findById(message.sessionId);
+        if (
+          remote === undefined ||
+          remote.deviceId !== principal.device.id ||
+          remote.revokedAt !== null ||
+          remote.expiresAt <= now ||
+          !remote.approvedCapabilities.includes('system.info')
+        ) {
+          sendError(
+            socket,
+            now,
+            'SESSION_EXPIRED',
+            'Remote Session ist nicht mehr gueltig',
+            message.messageId,
+          );
+          return;
+        }
+
+        const serverGranted = await serverGrantedCapabilities(context, principal.device.id);
+        const local = context.agentConnections.snapshot(connection.id);
+        if (
+          !serverGranted.includes('system.info') ||
+          local === undefined ||
+          !local.deviceGrantedCapabilities.includes('system.info')
+        ) {
+          sendError(
+            socket,
+            now,
+            'CAPABILITY_DENIED',
+            'system.info ist nicht wirksam freigegeben',
+            message.messageId,
+          );
+          return;
+        }
+
+        const payload = systemInfoPayloadSchema.safeParse(message.payload);
+        if (!payload.success) {
+          sendError(
+            socket,
+            now,
+            'INVALID_MESSAGE',
+            'Ungueltiger system.info.response Payload',
+            message.messageId,
+          );
+          return;
+        }
+
+        await touchPresence(now);
+        const accepted = context.agentConnections.resolveResponse(
+          principal.device.id,
+          message.sessionId,
+          payload.data,
+        );
+        if (!accepted) {
+          sendError(
+            socket,
+            now,
+            'SESSION_EXPIRED',
+            'Antwort ist zu spaet oder gehoert zu keiner offenen Anfrage',
+            message.messageId,
+          );
+        }
       };
 
       const processFrame = async (raw: unknown): Promise<void> => {
@@ -296,6 +401,22 @@ export async function registerAgentRoutes(
           return;
         }
 
+        if (!helloReceived && message.type !== 'agent.hello') {
+          sendError(
+            socket,
+            now,
+            'INVALID_MESSAGE',
+            'agent.hello muss die erste Nachricht sein',
+            message.messageId,
+          );
+          return;
+        }
+
+        if (message.type === 'system.info.response') {
+          await processSystemInfoResponse(message, now);
+          return;
+        }
+
         // Presence messages are deliberately non-privileged and therefore must
         // not pretend to belong to a Remote Session.
         if (message.sessionId !== null) {
@@ -304,17 +425,6 @@ export async function registerAgentRoutes(
             now,
             'INVALID_MESSAGE',
             'Presence-Nachrichten duerfen keine sessionId tragen',
-            message.messageId,
-          );
-          return;
-        }
-
-        if (!helloReceived && message.type !== 'agent.hello') {
-          sendError(
-            socket,
-            now,
-            'INVALID_MESSAGE',
-            'agent.hello muss die erste Nachricht sein',
             message.messageId,
           );
           return;
@@ -433,8 +543,6 @@ export async function registerAgentRoutes(
       });
 
       socket.on('error', () => {
-        // Do not log the socket error object: transport libraries can include
-        // request details. The close handler performs deterministic cleanup.
         request.log.warn(
           { deviceId: principal.device.deviceId },
           'agent websocket transport error',

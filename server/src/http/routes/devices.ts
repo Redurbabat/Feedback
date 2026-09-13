@@ -4,14 +4,21 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
 import {
+  AGENT_REQUEST_TIMEOUT_MS,
   HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_MISS_LIMIT,
   IMPLEMENTED_CAPABILITIES_V1,
   PROTOCOL_VERSION,
+  REMOTE_SESSION_TTL_MS,
 } from '../../constants.js';
 import type { AppContext } from '../../context.js';
 import type { DeviceCapabilityRecord, DeviceRecord } from '../../db/repositories/types.js';
 import { ProtocolError } from '../../errors.js';
+import {
+  AgentCapabilityUnavailableError,
+  AgentOfflineError,
+  AgentRequestTimeoutError,
+} from '../../services/agentConnections.js';
 import { requireCsrf, requirePrincipal, requireSession } from '../guards.js';
 import { assertBrowserContext } from '../security.js';
 import { parseOrThrow } from '../validation.js';
@@ -88,12 +95,17 @@ function toDeviceView(
   };
 }
 
-function agentFrame(type: string, payload: Record<string, unknown>, now: number): string {
+function agentFrame(
+  type: string,
+  payload: Record<string, unknown>,
+  now: number,
+  sessionId: string | null = null,
+): string {
   return JSON.stringify({
     version: PROTOCOL_VERSION,
     type,
     messageId: randomUUID(),
-    sessionId: null,
+    sessionId,
     timestamp: new Date(now).toISOString(),
     payload,
   });
@@ -197,17 +209,94 @@ export async function registerDeviceRoutes(
     const now = context.clock.now();
     context.agentConnections.sendToDevice(
       device.id,
-      agentFrame(
-        'capability.update',
-        { serverGrantedCapabilities: serverGranted },
-        now,
-      ),
+      agentFrame('capability.update', { serverGrantedCapabilities: serverGranted }, now),
     );
 
     return {
       deviceId: device.id,
       serverGrantedCapabilities: serverGranted,
     };
+  });
+
+  app.post('/devices/:id/system-info', async (request, reply) => {
+    assertBrowserContext(request, context.config.allowedOrigins);
+    const principal = await requireBrowserSession(context, request, reply);
+    requireCsrf(context, request);
+    const params = parseOrThrow(paramsSchema, request.params);
+    const device = await requireOwnedDevice(context, principal.user.id, params.id);
+    if (device.revokedAt !== null) {
+      throw new ProtocolError('DEVICE_REVOKED', 'Geraet wurde widerrufen');
+    }
+
+    const serverCapabilities = grantedCapabilities(
+      await context.repositories.deviceCapabilities.listForDevice(device.id),
+    );
+    if (!serverCapabilities.includes('system.info')) {
+      throw new ProtocolError('CAPABILITY_DENIED', 'system.info ist serverseitig nicht freigegeben');
+    }
+
+    const connections = context.agentConnections.snapshotsForDevice(device.id);
+    if (connections.length === 0) {
+      throw new ProtocolError('SESSION_EXPIRED', 'Geraet ist nicht verbunden');
+    }
+    if (!connections.some((entry) => entry.deviceGrantedCapabilities.includes('system.info'))) {
+      throw new ProtocolError('CAPABILITY_DENIED', 'system.info ist auf dem Geraet nicht freigegeben');
+    }
+
+    const startedAt = context.clock.now();
+    const remote = await context.repositories.remoteSessions.create({
+      ownerId: principal.user.id,
+      deviceId: device.id,
+      expiresAt: startedAt + REMOTE_SESSION_TTL_MS,
+      requestedCapabilities: ['system.info'],
+      approvedCapabilities: ['system.info'],
+    });
+
+    try {
+      const payload = await context.agentConnections.requestDevice({
+        deviceId: device.id,
+        sessionId: remote.id,
+        requiredCapability: 'system.info',
+        frame: agentFrame('system.info.request', {}, startedAt, remote.id),
+        timeoutMs: AGENT_REQUEST_TIMEOUT_MS,
+      });
+
+      await context.audit.record({
+        eventType: 'system.info.request',
+        result: 'success',
+        userId: principal.user.id,
+        deviceId: device.deviceId,
+        sessionId: remote.id,
+      });
+
+      return {
+        sessionId: remote.id,
+        systemInfo: payload,
+        serverTime: new Date(context.clock.now()).toISOString(),
+      };
+    } catch (error) {
+      const denied = error instanceof AgentCapabilityUnavailableError;
+      await context.audit.record({
+        eventType: 'system.info.request',
+        result: denied ? 'denied' : 'failure',
+        userId: principal.user.id,
+        deviceId: device.deviceId,
+        sessionId: remote.id,
+      });
+
+      if (error instanceof AgentCapabilityUnavailableError) {
+        throw new ProtocolError('CAPABILITY_DENIED', 'system.info ist auf dem Geraet nicht freigegeben');
+      }
+      if (error instanceof AgentOfflineError) {
+        throw new ProtocolError('SESSION_EXPIRED', 'Geraet ist nicht mehr verbunden');
+      }
+      if (error instanceof AgentRequestTimeoutError) {
+        throw new ProtocolError('SESSION_EXPIRED', 'Geraet hat nicht rechtzeitig geantwortet');
+      }
+      throw error;
+    } finally {
+      await context.repositories.remoteSessions.revoke(remote.id, context.clock.now());
+    }
   });
 
   app.post('/devices/:id/revoke', async (request, reply) => {
@@ -218,9 +307,6 @@ export async function registerDeviceRoutes(
     const device = await requireOwnedDevice(context, principal.user.id, params.id);
     const now = context.clock.now();
 
-    // Inform a currently connected device before invalidating its token and
-    // closing all agent sockets. This is advisory; revocation is enforced by
-    // the database/token checks even if delivery fails.
     context.agentConnections.sendToDevice(
       device.id,
       agentFrame('device.revoked', { reason: 'revoked_by_owner' }, now),

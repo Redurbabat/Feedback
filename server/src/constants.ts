@@ -13,6 +13,7 @@ export const PAIRING_MAX_LOOKUP_ATTEMPTS = 5;
 export const CLOCK_SKEW_MS = 120_000;
 export const NONCE_RETENTION_MS = 900_000;
 export const REMOTE_SESSION_TTL_MS = 60_000;
+export const AGENT_REQUEST_TIMEOUT_MS = 10_000;
 export const HEARTBEAT_INTERVAL_MS = 30_000;
 export const HEARTBEAT_MISS_LIMIT = 3;
 export const MAX_FRAME_BYTES = 65_536;

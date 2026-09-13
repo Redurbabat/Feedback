@@ -27,8 +27,38 @@ interface AgentConnectionEntry {
   deviceGrantedCapabilities: readonly string[];
 }
 
+interface PendingResponse {
+  readonly deviceId: string;
+  readonly sessionId: string;
+  readonly timer: NodeJS.Timeout;
+  readonly resolve: (payload: unknown) => void;
+  readonly reject: (error: Error) => void;
+}
+
+export class AgentOfflineError extends Error {
+  constructor() {
+    super('device agent is offline');
+    this.name = 'AgentOfflineError';
+  }
+}
+
+export class AgentCapabilityUnavailableError extends Error {
+  constructor(readonly capability: string) {
+    super(`device has not granted capability ${capability}`);
+    this.name = 'AgentCapabilityUnavailableError';
+  }
+}
+
+export class AgentRequestTimeoutError extends Error {
+  constructor() {
+    super('device agent request timed out');
+    this.name = 'AgentRequestTimeoutError';
+  }
+}
+
 /**
- * Tracks currently connected device agents in-process.
+ * Tracks currently connected device agents in-process and correlates one-shot
+ * request/response operations by Remote Session id.
  *
  * This is intentionally an MVP single-node registry. A multi-node deployment
  * needs a shared presence/event layer (for example Redis) behind the same
@@ -37,6 +67,7 @@ interface AgentConnectionEntry {
 export class AgentConnectionRegistry {
   private readonly byId = new Map<string, AgentConnectionEntry>();
   private readonly byDevice = new Map<string, Set<string>>();
+  private readonly pendingResponses = new Map<string, PendingResponse>();
 
   register(deviceId: string, socket: AgentSocketLike, now: number): AgentConnectionSnapshot {
     const id = randomUUID();
@@ -65,6 +96,7 @@ export class AgentConnectionRegistry {
     ids?.delete(connectionId);
     if (ids !== undefined && ids.size === 0) {
       this.byDevice.delete(entry.deviceId);
+      this.rejectPendingForDevice(entry.deviceId, new AgentOfflineError());
     }
   }
 
@@ -83,6 +115,11 @@ export class AgentConnectionRegistry {
     if (entry !== undefined) {
       entry.deviceGrantedCapabilities = [...new Set(capabilities)].sort();
     }
+  }
+
+  snapshot(connectionId: string): AgentConnectionSnapshot | undefined {
+    const entry = this.byId.get(connectionId);
+    return entry === undefined ? undefined : this.snapshotOf(entry);
   }
 
   isConnected(deviceId: string): boolean {
@@ -122,9 +159,72 @@ export class AgentConnectionRegistry {
     return sent;
   }
 
+  /**
+   * Sends one privileged request to the freshest connection that locally
+   * advertises `requiredCapability`, then waits for a response correlated by
+   * the unique Remote Session id.
+   */
+  requestDevice(input: {
+    deviceId: string;
+    sessionId: string;
+    requiredCapability: string;
+    frame: string;
+    timeoutMs: number;
+  }): Promise<unknown> {
+    if (this.pendingResponses.has(input.sessionId)) {
+      return Promise.reject(new Error('duplicate pending session id'));
+    }
+
+    const allConnections = this.entriesForDevice(input.deviceId);
+    if (allConnections.length === 0) {
+      return Promise.reject(new AgentOfflineError());
+    }
+    const eligible = allConnections
+      .filter((entry) => entry.deviceGrantedCapabilities.includes(input.requiredCapability))
+      .sort((left, right) => right.lastMessageAt - left.lastMessageAt);
+    const connection = eligible[0];
+    if (connection === undefined) {
+      return Promise.reject(new AgentCapabilityUnavailableError(input.requiredCapability));
+    }
+
+    return new Promise<unknown>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingResponses.delete(input.sessionId);
+        reject(new AgentRequestTimeoutError());
+      }, input.timeoutMs);
+      timer.unref();
+
+      this.pendingResponses.set(input.sessionId, {
+        deviceId: input.deviceId,
+        sessionId: input.sessionId,
+        timer,
+        resolve,
+        reject,
+      });
+
+      try {
+        connection.socket.send(input.frame);
+      } catch {
+        this.finishPending(input.sessionId, undefined, new AgentOfflineError());
+        this.unregister(connection.id);
+      }
+    });
+  }
+
+  /** Returns false for a late, duplicate, wrong-device or unknown response. */
+  resolveResponse(deviceId: string, sessionId: string, payload: unknown): boolean {
+    const pending = this.pendingResponses.get(sessionId);
+    if (pending === undefined || pending.deviceId !== deviceId) {
+      return false;
+    }
+    this.finishPending(sessionId, payload);
+    return true;
+  }
+
   closeDevice(deviceId: string, code = 4003, reason = 'device revoked'): number {
     const ids = this.byDevice.get(deviceId);
     if (ids === undefined) {
+      this.rejectPendingForDevice(deviceId, new AgentOfflineError());
       return 0;
     }
     let closed = 0;
@@ -140,11 +240,48 @@ export class AgentConnectionRegistry {
         closed += 1;
       }
     }
+    this.rejectPendingForDevice(deviceId, new AgentOfflineError());
     return closed;
   }
 
   get size(): number {
     return this.byId.size;
+  }
+
+  get pendingSize(): number {
+    return this.pendingResponses.size;
+  }
+
+  private entriesForDevice(deviceId: string): AgentConnectionEntry[] {
+    const ids = this.byDevice.get(deviceId);
+    if (ids === undefined) {
+      return [];
+    }
+    return [...ids]
+      .map((id) => this.byId.get(id))
+      .filter((entry): entry is AgentConnectionEntry => entry !== undefined);
+  }
+
+  private finishPending(sessionId: string, payload?: unknown, error?: Error): void {
+    const pending = this.pendingResponses.get(sessionId);
+    if (pending === undefined) {
+      return;
+    }
+    this.pendingResponses.delete(sessionId);
+    clearTimeout(pending.timer);
+    if (error !== undefined) {
+      pending.reject(error);
+    } else {
+      pending.resolve(payload);
+    }
+  }
+
+  private rejectPendingForDevice(deviceId: string, error: Error): void {
+    for (const [sessionId, pending] of [...this.pendingResponses]) {
+      if (pending.deviceId === deviceId) {
+        this.finishPending(sessionId, undefined, error);
+      }
+    }
   }
 
   private snapshotOf(entry: AgentConnectionEntry): AgentConnectionSnapshot {
