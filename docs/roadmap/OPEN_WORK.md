@@ -155,9 +155,15 @@ Geraetetest.
   fuer Feld, was er erzeugt. `tools/validators/check-protocol-fixtures.mjs` laesst CI fehlschlagen,
   wenn ein in Abschnitt 7.1 deklarierter `screen.*`-Typ kein Beispiel hat.
 
-  Offen: dasselbe fuer `files.*`, `media.*` und `system.info`. Die Mechanik steht, es fehlen die
-  Fixtures - `COVERED_PREFIXES` im Validator ist die Stelle, an der die Abdeckung waechst. Und
-  ein echter Ende-zu-Ende-Lauf ueber eine echte WebSocket-Verbindung ersetzt das nicht; er fehlt
+  `protocol/fixtures/files-v1.json` deckt `files.*` genauso ab - einschliesslich der
+  Medienbereiche, die dieselben Nachrichten benutzen und sich nur in der regierenden Capability
+  unterscheiden (Abschnitt 8.4). Die abgelehnten Beispiele sind dabei die wertvolleren: ein Name
+  mit Pfadanteil, ein Verzeichnis mit Groesse, ein Digest, der keiner ist, eine Capability, die
+  keinen Bereich regiert.
+
+  Offen: `system.info` (die Android-Seite braucht dafuer einen Context und ist nicht ohne
+  Weiteres im Unit-Test erreichbar) und die Presence-Nachrichten. Und ein echter
+  Ende-zu-Ende-Lauf ueber eine echte WebSocket-Verbindung ersetzt das alles nicht; er fehlt
   weiterhin.
 
 ## 5. Was Hardware braucht

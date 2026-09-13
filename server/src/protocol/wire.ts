@@ -3,6 +3,8 @@ import { z } from 'zod';
 import {
   DEVICE_NAME_MAX,
   FILE_CHUNK_BYTES,
+  FILE_MAX_LIST_ENTRIES,
+  FILE_NAME_MAX,
   SCREEN_CHUNK_BYTES,
   SCREEN_MAX_DIMENSION,
   SCREEN_MAX_FPS,
@@ -201,3 +203,72 @@ export const systemInfoPayloadSchema = z
       });
     }
   });
+
+// ------------------------------------------------------- files.read answers ---
+
+export const opaqueIdSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9_-]+$/u, 'muss eine opake base64url-Kennung sein');
+
+export function hasControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 32 || code === 127) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * A display name must not carry a path component. Protocol section 8.3.3 says the
+ * receiver rejects such an entry rather than repairing it: a name that needs
+ * repairing is the usual route to a traversal on this side.
+ */
+export const entryNameSchema = z
+  .string()
+  .min(1)
+  .max(FILE_NAME_MAX)
+  .refine(
+    (value) =>
+      value !== '.' &&
+      value !== '..' &&
+      !value.includes('/') &&
+      !value.includes('\\') &&
+      !hasControlCharacter(value),
+    'darf keinen Pfadanteil und keine Steuerzeichen enthalten',
+  );
+
+export const shareSchema = z
+  .object({
+    shareId: opaqueIdSchema,
+    displayName: entryNameSchema,
+    kind: z.enum(['tree', 'file', 'collection']),
+    /** Exactly one capability governs an area (section 8.3.1). */
+    capability: z.enum(['files.read', 'media.photos.read', 'media.videos.read']),
+    addedAt: z.string().min(20).max(40),
+  })
+  .strict();
+
+export const fileEntrySchema = z
+  .object({
+    id: opaqueIdSchema,
+    name: entryNameSchema,
+    mimeType: z.string().max(255).nullish(),
+    size: z.number().int().min(0).nullable(),
+    modifiedAt: z.string().min(20).max(40).nullish(),
+    kind: z.enum(['file', 'directory']),
+  })
+  .strict();
+
+export const sharesResponseSchema = z.object({ shares: z.array(shareSchema).max(64) }).strict();
+export const listResponseSchema = z
+  .object({
+    shareId: opaqueIdSchema,
+    entries: z.array(fileEntrySchema).max(FILE_MAX_LIST_ENTRIES),
+    nextCursor: z.string().min(1).max(256).nullish(),
+  })
+  .strict();
+export const metadataResponseSchema = z.object({ entry: fileEntrySchema }).strict();

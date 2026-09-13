@@ -33,7 +33,7 @@ const FIXTURE_DIR = 'protocol/fixtures';
  * covered elsewhere, and demanding a fixture for them right now would only invite
  * empty placeholder files. Adding a prefix here is how coverage grows.
  */
-const COVERED_PREFIXES = ['screen.'];
+const COVERED_PREFIXES = ['screen.', 'files.'];
 
 const problems = [];
 

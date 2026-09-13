@@ -8,7 +8,6 @@ import {
   AGENT_REQUEST_TIMEOUT_MS,
   FILES_SESSION_TTL_MS,
   FILE_MAX_LIST_ENTRIES,
-  FILE_NAME_MAX,
   SHARE_CAPABILITIES_V1,
 } from '../../constants.js';
 import type { AppContext } from '../../context.js';
@@ -20,6 +19,12 @@ import {
   AgentRequestTimeoutError,
 } from '../../services/agentConnections.js';
 import { TooManyTransfersError, type TransferChannel } from '../../services/fileTransfers.js';
+import {
+  listResponseSchema,
+  metadataResponseSchema,
+  opaqueIdSchema,
+  sharesResponseSchema,
+} from '../../protocol/wire.js';
 import {
   agentFrame,
   grantedCapabilities,
@@ -38,72 +43,6 @@ import { parseOrThrow } from '../validation.js';
 const SHARE_CAPABILITIES: readonly string[] = SHARE_CAPABILITIES_V1;
 
 const paramsSchema = z.object({ id: z.string().uuid() }).strict();
-const opaqueIdSchema = z
-  .string()
-  .min(1)
-  .max(128)
-  .regex(/^[A-Za-z0-9_-]+$/u, 'muss eine opake base64url-Kennung sein');
-
-function hasControlCharacter(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code < 32 || code === 127) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * A display name must not carry a path component. Protocol section 8.3.3 says the
- * receiver rejects such an entry rather than repairing it: a name that needs
- * repairing is the usual route to a traversal on this side.
- */
-const entryNameSchema = z
-  .string()
-  .min(1)
-  .max(FILE_NAME_MAX)
-  .refine(
-    (value) =>
-      value !== '.' &&
-      value !== '..' &&
-      !value.includes('/') &&
-      !value.includes('\\') &&
-      !hasControlCharacter(value),
-    'darf keinen Pfadanteil und keine Steuerzeichen enthalten',
-  );
-
-const shareSchema = z
-  .object({
-    shareId: opaqueIdSchema,
-    displayName: entryNameSchema,
-    kind: z.enum(['tree', 'file', 'collection']),
-    /** Exactly one capability governs an area (section 8.3.1). */
-    capability: z.enum(['files.read', 'media.photos.read', 'media.videos.read']),
-    addedAt: z.string().min(20).max(40),
-  })
-  .strict();
-
-const fileEntrySchema = z
-  .object({
-    id: opaqueIdSchema,
-    name: entryNameSchema,
-    mimeType: z.string().max(255).nullish(),
-    size: z.number().int().min(0).nullable(),
-    modifiedAt: z.string().min(20).max(40).nullish(),
-    kind: z.enum(['file', 'directory']),
-  })
-  .strict();
-
-const sharesResponseSchema = z.object({ shares: z.array(shareSchema).max(64) }).strict();
-const listResponseSchema = z
-  .object({
-    shareId: opaqueIdSchema,
-    entries: z.array(fileEntrySchema).max(FILE_MAX_LIST_ENTRIES),
-    nextCursor: z.string().min(1).max(256).nullish(),
-  })
-  .strict();
-const metadataResponseSchema = z.object({ entry: fileEntrySchema }).strict();
 
 const sessionBodySchema = z.object({ sessionId: z.string().uuid() }).strict();
 const openSessionBodySchema = z
