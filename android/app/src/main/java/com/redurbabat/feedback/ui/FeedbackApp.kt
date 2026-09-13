@@ -18,20 +18,31 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.redurbabat.feedback.security.DeviceIdentity
 
 @Composable
-fun FeedbackApp() {
+fun FeedbackApp(
+    identity: DeviceIdentity?,
+    identityAvailable: Boolean,
+) {
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
-            HomeScreen()
+            HomeScreen(
+                identity = identity,
+                identityAvailable = identityAvailable,
+            )
         }
     }
 }
 
 @Composable
-private fun HomeScreen() {
+private fun HomeScreen(
+    identity: DeviceIdentity?,
+    identityAvailable: Boolean,
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -45,16 +56,17 @@ private fun HomeScreen() {
             fontWeight = FontWeight.SemiBold,
         )
         Text(
-            text = "Dieses Gerät ist noch nicht verbunden.",
+            text = "Dieses Gerät besitzt eine eigene kryptografische Identität und ist noch nicht gekoppelt.",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        DeviceCard()
+        DeviceCard(identity = identity)
 
         Button(
-            onClick = { /* Pairing flow is implemented in Phase 1/2. */ },
+            onClick = { /* Pairing flow follows after the identity layer. */ },
             modifier = Modifier.fillMaxWidth(),
+            enabled = identityAvailable,
         ) {
             Text("Gerät verbinden")
         }
@@ -66,14 +78,17 @@ private fun HomeScreen() {
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
         )
-        SecurityRow("Geräteschlüssel", "Noch nicht eingerichtet")
+        SecurityRow(
+            label = "Geräteschlüssel",
+            value = if (identityAvailable) "Bereit · Android Keystore" else "Fehler",
+        )
         SecurityRow("Remote-Zugriff", "Aus")
         SecurityRow("Aktive Sitzung", "Keine")
     }
 }
 
 @Composable
-private fun DeviceCard() {
+private fun DeviceCard(identity: DeviceIdentity?) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(22.dp),
@@ -95,12 +110,40 @@ private fun DeviceCard() {
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
             )
+
+            if (identity != null) {
+                IdentityValue("Device-ID", identity.deviceId)
+                IdentityValue("Fingerprint", identity.fingerprint)
+            } else {
+                Text(
+                    text = "Die lokale Geräteidentität konnte nicht initialisiert werden. Pairing bleibt deshalb deaktiviert.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+
             Text(
-                text = "Nach der Kopplung erscheinen hier Verbindungsstatus und freigegebene Funktionen.",
+                text = "Der private Schlüssel verlässt den Android Keystore nicht. Beim Pairing wird nur der öffentliche Schlüssel verwendet.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+@Composable
+private fun IdentityValue(label: String, value: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+        )
     }
 }
 
