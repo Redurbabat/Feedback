@@ -5,15 +5,15 @@
 - [x] Repository initialisieren
 - [x] AI-Handoff und Engineering Constitution
 - [x] Vision, Architektur und Security Model
-- [ ] Android-Grundprojekt
-- [ ] CI-Build fuer Android
+- [x] Android-Grundprojekt
+- [x] CI-Build fuer Android
 
 ## Phase 1 - Lokale Android-Basis
 
-- [ ] native Compose-Oberflaeche
+- [x] native Compose-Oberflaeche
 - [ ] lokaler App-Lock
-- [ ] Android-Keystore-Identitaet
-- [ ] Device-ID/Fingerprint
+- [x] Android-Keystore-Identitaet
+- [x] Device-ID/Fingerprint
 - [ ] Berechtigungszentrale
 - [ ] sauberer Hintergrund-Lifecycle
 
