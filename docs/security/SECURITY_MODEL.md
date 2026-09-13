@@ -30,6 +30,8 @@ Der Server darf einen Geraetenamen, OS-String oder Modellnamen niemals als Ident
 
 Pairing nutzt einen kurzlebigen, einmalig verwendbaren Code bzw. QR-Payload. Ein Pairing muss auf der kontrollierenden Seite sichtbar bestaetigt werden. Nach erfolgreicher Kopplung wird das Ticket ungueltig.
 
+Der sechsstellige Anzeigecode ist nur ein Komfort-Lookup und kein alleiniger Sicherheitsanker. Der kryptografische Geraetenachweis, kurze TTLs, Versuchszaehler und serverseitige Rate Limits bleiben erforderlich.
+
 Pairing erteilt nur Basisvertrauen. Hochprivilegierte Capabilities werden separat freigegeben.
 
 ## Sessions
@@ -59,6 +61,26 @@ Capabilities sind deny-by-default. Beispiele:
 - `clipboard.write`
 
 `screen.control` impliziert nicht automatisch `files.read` oder andere Rechte.
+
+Eine Capability ist nur effektiv, wenn Serverfreigabe, lokale Geraetefreigabe, vorhandene OS-Berechtigung und Autorisierung der konkreten Remote-Session gleichzeitig vorliegen.
+
+## Hintergrundverbindung
+
+Eine dauerhafte Agent-Verbindung ist **kein** stiller Standardzustand. Der Besitzer aktiviert sie explizit in der sichtbaren Android-Oberflaeche.
+
+Der aktuelle Android-MVP verwendet dafuer einen Foreground Service mit folgenden Eigenschaften:
+
+- dauerhafte sichtbare Benachrichtigung
+- lokale Beenden-Aktion direkt in der Benachrichtigung
+- kein Boot-Receiver und kein heimlicher Autostart nach Geraeteneustart
+- exponentieller, begrenzter Reconnect mit Jitter statt aggressivem Polling
+- Device-Token bleibt im Keystore-geschuetzten lokalen Store
+- Widerruf beendet die Agent-Verbindung und macht das gespeicherte Token unbrauchbar
+- der Service erweitert keine Capability und kann keine lokale Freigabe ersetzen
+
+Auf Android 13+ wird die Benachrichtigungsberechtigung vor der Aktivierung angefragt. Die App aktiviert den Hintergrundmodus nicht, wenn der Nutzer diese sichtbare Benachrichtigung ablehnt.
+
+Der MVP deklariert den Android-Foreground-Service-Typ `specialUse`, weil die explizit vom Besitzer aktivierte Companion-Verbindung keinem engeren Standardtyp sauber entspricht. Vor einer Store-/Produktionsfreigabe muss diese Einordnung gegen die jeweils aktuelle Android-/Store-Policy geprueft und auf physischen Zielgeraeten getestet werden. Die App darf einen abgelehnten oder unzulaessigen FGS-Start nicht umgehen.
 
 ## Lokale Sichtbarkeit
 
@@ -100,5 +122,7 @@ Mindestens zu testen und zu behandeln:
 - MITM auf Signaling/Control-Plane
 - kompromittierter Server
 - gerootetes bzw. kompromittiertes Endgeraet
+- missbrauchte oder vom OS beendete Hintergrunddienste
+- unkontrollierte Reconnect-Schleifen bei instabilen Netzen
 
 Ein kompromittiertes/rooted Endgeraet kann nicht vollstaendig abgesichert werden. Die App soll diesen Zustand, soweit verlaesslich erkennbar, als erhoehtes Risiko behandeln, aber keine falsche Sicherheitsgarantie geben.
