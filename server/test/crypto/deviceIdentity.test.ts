@@ -99,7 +99,9 @@ describe('signature verification', () => {
   it('rejects a tampered signature without throwing', () => {
     const payload = 'feedback-test-payload';
     const signature = Buffer.from(device.sign(payload), 'base64url');
-    signature[signature.length - 1] ^= 0xff;
+    expect(signature.length).toBeGreaterThan(0);
+    const lastIndex = signature.length - 1;
+    signature.writeUInt8(signature.readUInt8(lastIndex) ^ 0xff, lastIndex);
     expect(verifySignature(payload, signature.toString('base64url'), key)).toBe(false);
   });
 
