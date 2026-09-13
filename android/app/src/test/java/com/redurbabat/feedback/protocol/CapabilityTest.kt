@@ -21,12 +21,33 @@ class CapabilityTest {
         assertEquals(Capability.CLIPBOARD_WRITE, Capability.fromWire("clipboard.write"))
     }
 
+    /**
+     * Guards protocol section 8.1. Flipping a capability to implemented is a protocol change, so
+     * this list has to be edited deliberately - never to make a failing test pass.
+     */
     @Test
-    fun onlySystemInfoIsImplementedInV1() {
+    fun exactlySystemInfoAndFilesReadAreImplementedInV1() {
+        val implemented = setOf(Capability.SYSTEM_INFO, Capability.FILES_READ)
         for (capability in Capability.values()) {
-            val expected = capability == Capability.SYSTEM_INFO
-            assertEquals(capability.wireName, expected, capability.implemented)
+            assertEquals(
+                capability.wireName,
+                capability in implemented,
+                capability.implemented,
+            )
         }
+    }
+
+    @Test
+    fun anUnimplementedCapabilityIsRefusedAsUnsupported() {
+        val permission = EffectivePermission.evaluate(
+            capability = Capability.SCREEN_VIEW,
+            serverGranted = setOf(Capability.SCREEN_VIEW),
+            deviceGranted = setOf(Capability.SCREEN_VIEW),
+            osAvailable = setOf(Capability.SCREEN_VIEW),
+            sessionAuthorized = setOf(Capability.SCREEN_VIEW),
+        )
+        assertFalse("all four factors must still not be enough", permission.effective)
+        assertEquals(ProtocolError.UNSUPPORTED, permission.denialReason())
     }
 
     @Test

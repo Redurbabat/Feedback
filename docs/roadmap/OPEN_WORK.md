@@ -102,6 +102,11 @@ Input-Funktionen werden nicht begonnen, bevor Files stabil ist.
   Aendert sich ein Ordner waehrend des Blaetterns, kann ein Eintrag doppelt oder gar nicht
   erscheinen. Eine stabile Sortierung wuerde bedeuten, jeden Ordner vollstaendig zu lesen, bevor
   die erste Seite beantwortet wird.
+- **Der lokale Vorab-Test deckt nicht alles ab.** In dieser Umgebung ist kein Android-SDK
+  verfuegbar (`dl.google.com` ist per Egress-Policy gesperrt), deshalb laufen die android-freien
+  Tests lokal ueber einen eigenen Kotlin-Harness. Dessen Dateiliste wird von Hand gepflegt - ein
+  vergessener Test faellt erst in CI auf, wie beim Umstellen von `files.read` auf implementiert
+  geschehen. Die Android-CI bleibt die verbindliche Pruefung.
 - **Kein Integrationstest ueber die drei Implementierungen hinweg.** Android, Server und Control
   Web werden je fuer sich getestet; dass die kanonischen Payloads und Feldnamen wirklich
   zusammenpassen, prueft bisher nur ein Mensch.
