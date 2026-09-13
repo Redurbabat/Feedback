@@ -39,14 +39,22 @@ spaetere erneute Kopplung startet damit ohne Freigaben, statt alte Auswahlen sti
 
 Ungetestet auf echter Hardware - siehe Abschnitt 5 (Storage Access Framework).
 
-### 2.2 Server: gar nicht begonnen
+### 2.2 Server: begonnen, Fundament steht
 
-Auf der Serverseite existiert für `files.read` bisher **nichts**. Benoetigt werden:
+**Erledigt:**
+
+- ~~Korrelation ueber `messageId` statt ueber `sessionId`.~~ `relatesTo` ist jetzt ein
+  dokumentiertes Envelope-Feld (Protokoll Abschnitt 7), beide Seiten setzen und pruefen es, und
+  `AgentConnectionRegistry` schluesselt offene Anfragen ueber `messageId`. Die Session bleibt der
+  Autorisierungsrahmen: `rejectPendingForSession` laesst bei Widerruf jede darunter wartende
+  Anfrage scheitern, statt sie haengen zu lassen.
+- ~~Serverkonstanten an Abschnitt 11 angleichen.~~ Alle neun `files.read`-Limits stehen in
+  `server/src/constants.ts`, und `tools/validators/check-protocol-constants.mjs` haelt sie dort.
+
+**Noch offen:**
 
 - laengerlebige `files.read`-Remote-Sessions (`FILES_SESSION_TTL_MS = 300000`) neben den
   bestehenden 60-Sekunden-Sessions fuer `system.info`
-- Korrelation ueber `messageId` statt ueber `sessionId`: eine Files-Session traegt viele Anfragen,
-  die bestehende `AgentConnectionRegistry.requestDevice` korreliert aber genau eine
 - Streaming-Bruecke von `files.download.chunk` auf eine HTTP-Antwort, ohne Inhalte auf Platte zu
   schreiben, mit Gegendruck (`files.download.ack`) und Pruefung von Sequenz, `totalBytes` und
   `sha256`
@@ -54,12 +62,13 @@ Auf der Serverseite existiert für `files.read` bisher **nichts**. Benoetigt wer
 - `FILE_MAX_DOWNLOAD_BYTES` serverseitig konfigurierbar
 - Rate Limits fuer `files/session` und `files/content`
 - Audit-Ereignisse `file.transfer.started`, `file.transfer.completed`, `file.transfer.cancelled`
-- Serverkonstanten in `server/src/constants.ts` an Abschnitt 11 angleichen und `files.read` in
-  `IMPLEMENTED_CAPABILITIES_V1` aufnehmen
+- `files.read` in `IMPLEMENTED_CAPABILITIES_V1` aufnehmen - **zuletzt**, erst wenn die Routen
+  wirklich antworten
 
 Solange das fehlt, weicht der Server vom Protokoll ab: `protocol/PROTOCOL.md` fuehrt `files.read`
-bereits als implementiert, `server/src/constants.ts` nicht. Das ist eine bewusste, hier
-dokumentierte Zwischenstufe, keine stille Abweichung.
+bereits als implementiert, `server/src/constants.ts` nicht. Das ist eine bewusste Zwischenstufe -
+seit dem Validator ist sie nicht mehr nur hier dokumentiert, sondern in `KNOWN_GAPS` deklariert
+und faellt auf, sobald jemand sie stillschweigend aufloest.
 
 ### 2.3 Control Web: gar nicht begonnen
 
