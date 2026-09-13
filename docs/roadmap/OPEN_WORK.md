@@ -17,6 +17,8 @@ Regeln aus `FEEDBACK_CONSTITUTION.md` Punkt 11 gelten: "implementiert" heisst ec
 | QR-Code des Pairing-Tickets auf Android rendern | fertig, CI gruen |
 | `files.read` im Protokoll definiert (Abschnitt 8.3) | fertig |
 | Android `files.read`: Modell, SAF-Grants, Streaming-Reader, Request-Handler, Agent-Anbindung | implementiert, Unit-Tests gruen |
+| Android `files.read`: Freigabe-Oberflaeche (Ordner-/Datei-Picker, Entziehen, Capability-Schalter) | fertig, CI gruen (Lauf 46) |
+| `tools/validators/check-protocol-constants.mjs` | fertig, laeuft in CI |
 
 Kein Punkt dieser Tabelle wurde auf echter Hardware getestet. Siehe Abschnitt 5.
 
@@ -24,20 +26,18 @@ Kein Punkt dieser Tabelle wurde auf echter Hardware getestet. Siehe Abschnitt 5.
 
 Der Android-Unterbau steht, aber die Funktion ist **noch nicht benutzbar**. Es fehlen drei Teile:
 
-### 2.1 Android: Freigabe-Oberflaeche fehlt
+### 2.1 Android: Freigabe-Oberflaeche - erledigt
 
-`files.read` ist auf dem Geraet vollstaendig implementiert, aber **nicht erreichbar**: es gibt
-keinen Bildschirm, auf dem der Besitzer einen Ordner oder eine Datei auswaehlt. Ohne diesen
-Picker ist `FileShareStore` leer, jede Auflistung liefert nichts, und die Capability laeuft ins
-Leere.
+Alle vier Punkte sind umgesetzt und in CI-Lauf 46 verifiziert: beide Picker ueber
+`rememberLauncherForActivityResult`, eine Karte mit den freigegebenen Bereichen und einzelnem
+Entziehen, der `files.read`-Schalter mit Re-Authentisierung beim Freigeben
+(`SensitiveAction.GRANT_FILES_READ`), und die Anzeige entzogener Grants ueber
+`FileShareStore.inventory()`.
 
-Konkret fehlt:
+Zusaetzlich: das Entfernen der lokalen Kopplung hebt jetzt auch alle Dateifreigaben auf. Eine
+spaetere erneute Kopplung startet damit ohne Freigaben, statt alte Auswahlen still wiederzubeleben.
 
-- `ACTION_OPEN_DOCUMENT_TREE` und `ACTION_OPEN_DOCUMENT` ueber `rememberLauncherForActivityResult`
-- eine Karte in der Geraeteverwaltung, die freigegebene Bereiche zeigt und einzeln entziehen laesst
-- der lokale `files.read`-Schalter neben dem bestehenden `system.info`-Schalter, inklusive
-  Re-Authentisierung beim Freigeben (`SensitiveAction`), analog zu `GRANT_SYSTEM_INFO`
-- Anzeige, wenn Android einen Grant hinter dem Ruecken der App entzogen hat
+Ungetestet auf echter Hardware - siehe Abschnitt 5 (Storage Access Framework).
 
 ### 2.2 Server: gar nicht begonnen
 
@@ -96,11 +96,13 @@ die nur im selben Netz funktioniert, zaehlt nicht als implementiert.
 
 - **QR-Scanner fehlt.** Android rendert den QR-Code, kann aber keinen scannen. Ein Scanner braucht
   die Kamera-Berechtigung und wird erst mit dokumentiertem Bedarf gebaut.
-- **`tools/validators/check-protocol-constants.mjs` existiert nicht**, obwohl
-  `.claude/commands/protocol-review.md` ihn als Pruefpunkt auffuehrt. Die Limit-Konstanten werden
-  derzeit nur von Hand zwischen `protocol/PROTOCOL.md`, `ProtocolConstants.kt` und
-  `server/src/constants.ts` abgeglichen. Ein Validator waere wertvoll, gerade jetzt, wo mit
-  `files.read` neun neue Konstanten dazugekommen sind.
+- ~~`tools/validators/check-protocol-constants.mjs` existiert nicht.~~ **Erledigt.** Der Validator
+  vergleicht die 19 Limits aus Abschnitt 11, die acht Capability-Namen und die 13 Fehlercodes
+  zwischen `protocol/PROTOCOL.md`, `ProtocolConstants.kt`, `Capability.kt`, `ProtocolError.kt`,
+  `server/src/constants.ts` und `server/src/errors.ts` und laeuft als eigener CI-Job. Er hat beim
+  ersten Lauf genau die erwartete Drift gefunden: dem Server fehlten acht der neun
+  `files.read`-Limits. Die sind jetzt angeglichen. Bewusste Abweichungen muessen in `KNOWN_GAPS`
+  deklariert werden - undeklarierte lassen den Job fehlschlagen.
 - **Paging-Reihenfolge ist die des Providers.** `FileListCursor` ist ein Offset in die Zeilenfolge,
   die der Android-Dokumentenanbieter liefert. Die ist in der Praxis stabil, aber nicht garantiert.
   Aendert sich ein Ordner waehrend des Blaetterns, kann ein Eintrag doppelt oder gar nicht
@@ -146,6 +148,9 @@ Diese sind bewusst so und in `docs/security/SECURITY_MODEL.md` ausfuehrlich bena
 
 ## 7. Naechster konkreter Schritt
 
-Die Android-Freigabe-Oberflaeche aus Abschnitt 2.1. Sie ist der kleinste Schritt, der `files.read`
-von "implementiert" zu "auf dem Geraet benutzbar" bringt, und sie ist Voraussetzung dafuer, die
-Server- und Control-Web-Seite ueberhaupt gegen echte Daten testen zu koennen.
+Die Serverseite aus Abschnitt 2.2. Das Geraet kann jetzt Bereiche freigeben und Anfragen
+beantworten, aber niemand kann fragen: es gibt keine Files-Session, keine Streaming-Bruecke und
+keinen der fuenf Endpunkte. Damit ist der Server das einzige Glied, das die Kette noch trennt.
+
+Die Serverkonstanten aus Abschnitt 11 sind bereits angeglichen, `IMPLEMENTED_CAPABILITIES_V1`
+bewusst noch nicht - `files.read` gehoert dort erst hinein, wenn die Routen wirklich antworten.
