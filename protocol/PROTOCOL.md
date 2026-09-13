@@ -62,6 +62,32 @@ Capabilities werden einzeln ausgewertet. Es gibt keine implizite Hierarchie, aus
 
 Pairing-Nachrichten werden getrennt von normalen Remote-Sessions behandelt. Pairing-Tickets sind kurzlebig, einmalig und nach Erfolg oder Widerruf ungueltig.
 
+### Pairing Proof v1
+
+Der Android-Agent kann bereits lokal einen signierten Pairing-Nachweis erzeugen. Der kanonische UTF-8-Payload besteht exakt aus diesen, durch `\n` getrennten Zeilen:
+
+```text
+feedback-pairing-v1
+<deviceId>
+<publicKeyBase64>
+<nonceBase64Url>
+<issuedAtEpochMillis>
+<expiresAtEpochMillis>
+<sixDigitCode>
+```
+
+Regeln:
+
+- `publicKeyBase64` ist der X.509-kodierte EC-Public-Key.
+- Signaturalgorithmus: ECDSA P-256 mit SHA-256 (`SHA256withECDSA`).
+- Payload und Signatur werden fuer den Transport Base64URL ohne Padding kodiert.
+- Nonce: 18 zufaellige Bytes.
+- lokale Ticket-Laufzeit: maximal 5 Minuten.
+- Zahlencode: sechs Stellen inklusive fuehrender Nullen.
+- `deviceId` wird aus SHA-256 des Public Keys abgeleitet (`fb-` plus die ersten 24 Hex-Zeichen).
+
+Der Server muss spaeter vor einer Registrierung mindestens Signatur, Ablaufzeit, Nonce-Wiederverwendung und die Ableitung der Device-ID pruefen. Der sechsstellige Code braucht strikte Rate Limits und darf nur einmal verwendet werden. Bis die Serverregistrierung implementiert ist, ist der lokal erzeugte Code nur ein vorbereiteter Pairing-Nachweis und noch kein online nutzbares Ticket.
+
 ## Remote Input
 
 `screen.control` wird erst in einer spaeteren Protokollversion aktiviert. Input-Events benoetigen eine aktive, lokal sichtbare Control-Session und duerfen keine Shell-Kommandos oder beliebige Codeausfuehrung transportieren.
