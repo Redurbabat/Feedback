@@ -35,14 +35,7 @@ const FILES = {
  * Anything not listed here is a finding. Removing an entry must make the check pass,
  * never fail - otherwise the list becomes a place to hide problems.
  */
-const KNOWN_GAPS = [
-  {
-    id: 'server-implemented-capabilities',
-    reason:
-      'Der Server implementiert files.read noch nicht (OPEN_WORK.md 2.2). Er darf die Capability ' +
-      'deshalb nicht als implementiert fuehren, obwohl das Geraet sie beherrscht.',
-  },
-];
+const KNOWN_GAPS = [];
 
 const problems = [];
 const notes = [];

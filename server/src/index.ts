@@ -35,6 +35,9 @@ async function main(): Promise<void> {
         await context.repositories.pairingSessions.expireStale(now);
         await context.repositories.pairingNonces.deleteExpired(now - NONCE_RETENTION_MS);
         await context.sessions.pruneExpired();
+        // A transfer whose device stopped talking would otherwise hold a response
+        // open forever.
+        context.fileTransfers.sweep(now);
       } catch (error) {
         app.log.error({ err: error }, 'maintenance run failed');
       }

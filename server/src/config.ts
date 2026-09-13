@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { FILE_MAX_DOWNLOAD_BYTES } from './constants.js';
+
 /**
  * Configuration is read from the environment and validated with zod.
  *
@@ -53,6 +55,17 @@ const envSchema = z.object({
     .min(60_000)
     .max(30 * 24 * 60 * 60 * 1000)
     .default(12 * 60 * 60 * 1000),
+  /**
+   * Upper bound for one download, capped by the protocol value. A deployment may
+   * lower it; it may not raise it above what the protocol fixes, and the device
+   * enforces its own limit as well - the smaller of the two wins.
+   */
+  FEEDBACK_FILE_MAX_DOWNLOAD_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(FILE_MAX_DOWNLOAD_BYTES)
+    .default(FILE_MAX_DOWNLOAD_BYTES),
   FEEDBACK_TRUST_PROXY: booleanFromEnv.default('false'),
   FEEDBACK_LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
@@ -70,6 +83,7 @@ export interface AppConfig {
   readonly cookieSecret: string;
   readonly allowedOrigins: readonly string[];
   readonly sessionTtlMs: number;
+  readonly fileMaxDownloadBytes: number;
   readonly trustProxy: boolean;
   readonly logLevel: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent';
   readonly bootstrap:
@@ -130,6 +144,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     cookieSecret: value.FEEDBACK_COOKIE_SECRET,
     allowedOrigins: value.FEEDBACK_ALLOWED_ORIGINS,
     sessionTtlMs: value.FEEDBACK_SESSION_TTL_MS,
+    fileMaxDownloadBytes: value.FEEDBACK_FILE_MAX_DOWNLOAD_BYTES,
     trustProxy: value.FEEDBACK_TRUST_PROXY,
     logLevel: value.FEEDBACK_LOG_LEVEL,
     bootstrap:

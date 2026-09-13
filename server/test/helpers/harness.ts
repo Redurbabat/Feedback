@@ -17,6 +17,7 @@ import { createAppContext } from '../../src/context.js';
 import { openDatabase } from '../../src/db/client.js';
 import type { DatabaseHandle } from '../../src/db/client.js';
 import { runMigrations } from '../../src/db/migrate.js';
+import { FILE_MAX_DOWNLOAD_BYTES } from '../../src/constants.js';
 import { buildApp } from '../../src/http/app.js';
 import { MutableClock } from '../../src/services/clock.js';
 
@@ -38,6 +39,7 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     cookieSecret: randomBytes(32).toString('base64url'),
     allowedOrigins: [TEST_ORIGIN],
     sessionTtlMs: 12 * 60 * 60 * 1000,
+    fileMaxDownloadBytes: FILE_MAX_DOWNLOAD_BYTES,
     trustProxy: false,
     logLevel: 'silent',
     bootstrap: undefined,

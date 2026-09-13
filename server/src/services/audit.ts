@@ -19,6 +19,10 @@ export const AUDIT_EVENT_TYPES = [
   'device.capabilities.update',
   'device.revoke',
   'system.info.request',
+  'files.session.open',
+  'file.transfer.started',
+  'file.transfer.completed',
+  'file.transfer.cancelled',
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];

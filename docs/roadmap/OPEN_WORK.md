@@ -39,36 +39,30 @@ spaetere erneute Kopplung startet damit ohne Freigaben, statt alte Auswahlen sti
 
 Ungetestet auf echter Hardware - siehe Abschnitt 5 (Storage Access Framework).
 
-### 2.2 Server: begonnen, Fundament steht
+### 2.2 Server: erledigt
 
-**Erledigt:**
+Alle Punkte umgesetzt und lokal verifiziert (Typecheck, Lint, 103 Tests, Build):
 
-- ~~Korrelation ueber `messageId` statt ueber `sessionId`.~~ `relatesTo` ist jetzt ein
-  dokumentiertes Envelope-Feld (Protokoll Abschnitt 7), beide Seiten setzen und pruefen es, und
-  `AgentConnectionRegistry` schluesselt offene Anfragen ueber `messageId`. Die Session bleibt der
-  Autorisierungsrahmen: `rejectPendingForSession` laesst bei Widerruf jede darunter wartende
-  Anfrage scheitern, statt sie haengen zu lassen.
-- ~~Serverkonstanten an Abschnitt 11 angleichen.~~ Alle neun `files.read`-Limits stehen in
-  `server/src/constants.ts`, und `tools/validators/check-protocol-constants.mjs` haelt sie dort.
-
-**Noch offen:**
-
-- laengerlebige `files.read`-Remote-Sessions (`FILES_SESSION_TTL_MS = 300000`) neben den
-  bestehenden 60-Sekunden-Sessions fuer `system.info`
-- Streaming-Bruecke von `files.download.chunk` auf eine HTTP-Antwort, ohne Inhalte auf Platte zu
-  schreiben, mit Gegendruck (`files.download.ack`) und Pruefung von Sequenz, `totalBytes` und
-  `sha256`
+- `files.read`-Remote-Sessions mit `FILES_SESSION_TTL_MS`, getrennt von den
+  60-Sekunden-Sessions fuer `system.info`
+- Korrelation ueber `messageId`/`relatesTo` statt ueber `sessionId`
+- Streaming-Bruecke `files.download.chunk` auf die HTTP-Antwort ueber `FileTransferHub`:
+  nichts auf Platte, Gegendruck per `files.download.ack`, Pruefung von Sequenz, Groesse,
+  `totalBytes` und `sha256`
 - die fuenf REST-Endpunkte aus Protokoll-Abschnitt 6.2
-- `FILE_MAX_DOWNLOAD_BYTES` serverseitig konfigurierbar
+- `FILE_MAX_DOWNLOAD_BYTES` ueber `FEEDBACK_FILE_MAX_DOWNLOAD_BYTES` konfigurierbar (nur nach unten)
 - Rate Limits fuer `files/session` und `files/content`
-- Audit-Ereignisse `file.transfer.started`, `file.transfer.completed`, `file.transfer.cancelled`
-- `files.read` in `IMPLEMENTED_CAPABILITIES_V1` aufnehmen - **zuletzt**, erst wenn die Routen
-  wirklich antworten
+- Audit-Ereignisse `files.session.open`, `file.transfer.started`, `file.transfer.completed`,
+  `file.transfer.cancelled`
+- `files.read` steht jetzt in `IMPLEMENTED_CAPABILITIES_V1`; die dafuer deklarierte Abweichung
+  im Validator ist entfallen, und `KNOWN_GAPS` ist wieder leer
 
-Solange das fehlt, weicht der Server vom Protokoll ab: `protocol/PROTOCOL.md` fuehrt `files.read`
-bereits als implementiert, `server/src/constants.ts` nicht. Das ist eine bewusste Zwischenstufe -
-seit dem Validator ist sie nicht mehr nur hier dokumentiert, sondern in `KNOWN_GAPS` deklariert
-und faellt auf, sobald jemand sie stillschweigend aufloest.
+Die Capability wird **pro Anfrage** neu geprueft, nicht pro Sitzung. Ein Entzug auf einer der
+beiden Seiten stoppt eine laufende Uebertragung sofort, statt bis zum Ablauf der Sitzung
+weiter Bytes zu liefern. Ebenso beenden Widerruf des Geraets, Verlust der Agent-Verbindung und
+`FILE_TRANSFER_IDLE_TIMEOUT_MS` ohne Fortschritt jeden offenen Transfer.
+
+Nicht gegen ein echtes Geraet getestet - nur gegen einen Fake-Agenten. Siehe Abschnitt 5.
 
 ### 2.3 Control Web: gar nicht begonnen
 
@@ -79,10 +73,11 @@ und faellt auf, sobald jemand sie stillschweigend aufloest.
 
 ### 2.4 Definition of Done fuer Files
 
-Aus dem Auftrag, noch offen: Benutzer waehlt lokal einen Bereich; Server- **und** lokale Freigabe
-erforderlich; keine nicht freigegebenen Bereiche sichtbar; Listing; Download; grosse Datei wird
-gestreamt; Cancellation; Limits; Widerruf stoppt Zugriff. Von diesen Punkten ist bisher nur die
-Geraeteseite implementiert und unit-getestet.
+Benutzer waehlt lokal einen Bereich, Server- **und** lokale Freigabe erforderlich, keine nicht
+freigegebenen Bereiche sichtbar, Listing, Download, Streaming grosser Dateien, Cancellation,
+Limits, Widerruf stoppt den Zugriff: alles davon ist auf Geraet und Server implementiert und
+getestet. Offen bleibt die Bedienoberflaeche im Control Center - und damit ein Durchlauf, bei
+dem ein Mensch die Kette tatsaechlich benutzt.
 
 ## 3. Spaetere Milestones - nicht begonnen
 
@@ -157,9 +152,10 @@ Diese sind bewusst so und in `docs/security/SECURITY_MODEL.md` ausfuehrlich bena
 
 ## 7. Naechster konkreter Schritt
 
-Die Serverseite aus Abschnitt 2.2. Das Geraet kann jetzt Bereiche freigeben und Anfragen
-beantworten, aber niemand kann fragen: es gibt keine Files-Session, keine Streaming-Bruecke und
-keinen der fuenf Endpunkte. Damit ist der Server das einzige Glied, das die Kette noch trennt.
+Der Dateien-Tab im Control Center aus Abschnitt 2.3. Geraet und Server sind fertig: der Weg von
+einem freigegebenen Ordner bis zu einer heruntergeladenen Datei ist durchgehend implementiert und
+gegen einen Fake-Agenten getestet. Es fehlt die Oberflaeche, die ihn benutzt.
 
-Die Serverkonstanten aus Abschnitt 11 sind bereits angeglichen, `IMPLEMENTED_CAPABILITIES_V1`
-bewusst noch nicht - `files.read` gehoert dort erst hinein, wenn die Routen wirklich antworten.
+Danach - und das ist der wichtigere Schritt - ein erster Durchlauf gegen ein echtes Geraet nach
+`docs/deployment/BETRIEB.md`. Bisher wurde jede Schicht fuer sich geprueft; dass die Kette als
+Ganzes traegt, hat noch niemand gesehen.

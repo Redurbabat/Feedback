@@ -63,13 +63,14 @@ export type CapabilityV1 = (typeof CAPABILITIES_V1)[number];
  * Capabilities that actually have an implementation behind them in v1.
  * Everything else is declared, deny-by-default and answers UNSUPPORTED.
  *
- * `files.read` is deliberately absent: the device implements it, the server does
- * not serve it yet (OPEN_WORK.md section 2.2). Adding it here before the routes
- * exist would advertise a capability the server cannot answer. The constants
- * validator knows about this gap and will stop accepting it once the entry is
- * added on both sides.
+ * This list is the single switch that makes a capability live: `grantedCapabilities`
+ * filters server side grants against it, so a capability missing here is never
+ * reported as granted no matter what the owner set in the control center.
  */
-export const IMPLEMENTED_CAPABILITIES_V1: readonly CapabilityV1[] = ['system.info'];
+export const IMPLEMENTED_CAPABILITIES_V1: readonly CapabilityV1[] = [
+  'system.info',
+  'files.read',
+];
 
 export function isCapabilityV1(value: string): value is CapabilityV1 {
   return (CAPABILITIES_V1 as readonly string[]).includes(value);

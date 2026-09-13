@@ -6,6 +6,7 @@ import { z } from 'zod';
 import {
   CLOCK_SKEW_MS,
   DEVICE_NAME_MAX,
+  FILE_CHUNK_BYTES,
   HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_MISS_LIMIT,
   IMPLEMENTED_CAPABILITIES_V1,
@@ -14,6 +15,7 @@ import {
 } from '../../constants.js';
 import type { AppContext } from '../../context.js';
 import type { ErrorCode } from '../../errors.js';
+import { isTransferCancelReason } from '../../services/fileTransfers.js';
 import { requireDevicePrincipal, requireDeviceToken } from '../deviceAuth.js';
 
 const MESSAGE_ID_V4 =
@@ -63,6 +65,49 @@ const envelopeSchema = z
     payload: z.unknown(),
   })
   .strict();
+
+const FILES_RESPONSE_TYPES = new Set([
+  'files.shares.response',
+  'files.list.response',
+  'files.metadata.response',
+]);
+
+const transferIdSchema = z.string().uuid();
+
+const downloadChunkSchema = z
+  .object({
+    transferId: transferIdSchema,
+    sequence: z.number().int().min(0),
+    data: z.string().max(Math.ceil((FILE_CHUNK_BYTES * 4) / 3) + 8),
+    last: z.boolean(),
+  })
+  .strict();
+
+const downloadCompleteSchema = z
+  .object({
+    transferId: transferIdSchema,
+    totalBytes: z.number().int().min(0),
+    sha256: z.string().regex(/^[0-9a-f]{64}$/iu, 'muss ein 64-stelliger Hex-Digest sein'),
+  })
+  .strict();
+
+const downloadCancelSchema = z
+  .object({
+    transferId: transferIdSchema,
+    reason: z.string().max(32),
+  })
+  .strict();
+
+/**
+ * Decodes a chunk strictly.
+ *
+ * Buffer.from accepts sloppy base64 and silently drops what it cannot read, so the
+ * only way to know the device sent what it meant to is to re-encode and compare.
+ */
+function decodeChunk(data: string): Buffer | undefined {
+  const decoded = Buffer.from(data, 'base64');
+  return decoded.toString('base64') === data ? decoded : undefined;
+}
 
 const helloPayloadSchema = z
   .object({
@@ -343,6 +388,200 @@ export async function registerAgentRoutes(
         }
       };
 
+      /**
+       * Handles every `files.*` frame from the device.
+       *
+       * The capability is re-checked per frame, not per session. A transfer that is
+       * already running must stop the moment either side withdraws files.read -
+       * waiting for the five minute session to expire would keep delivering bytes
+       * the owner already said no to.
+       */
+      const processFilesMessage = async (
+        message: z.infer<typeof envelopeSchema>,
+        now: number,
+      ): Promise<void> => {
+        if (message.sessionId === null) {
+          sendError(
+            socket,
+            now,
+            'SESSION_EXPIRED',
+            'files-Nachrichten benoetigen eine Remote Session',
+            message.messageId,
+          );
+          return;
+        }
+
+        const remote = await context.repositories.remoteSessions.findById(message.sessionId);
+        if (
+          remote === undefined ||
+          remote.deviceId !== principal.device.id ||
+          remote.revokedAt !== null ||
+          remote.expiresAt <= now ||
+          !remote.approvedCapabilities.includes('files.read')
+        ) {
+          context.fileTransfers.cancelForSession(
+            message.sessionId,
+            'session_expired',
+            'remote session is no longer valid',
+          );
+          sendError(
+            socket,
+            now,
+            'SESSION_EXPIRED',
+            'Remote Session ist nicht mehr gueltig',
+            message.messageId,
+          );
+          return;
+        }
+
+        const serverGranted = await serverGrantedCapabilities(context, principal.device.id);
+        const local = context.agentConnections.snapshot(connection.id);
+        if (
+          !serverGranted.includes('files.read') ||
+          local === undefined ||
+          !local.deviceGrantedCapabilities.includes('files.read')
+        ) {
+          context.fileTransfers.cancelForSession(
+            message.sessionId,
+            'capability_revoked',
+            'files.read is no longer effective',
+          );
+          sendError(
+            socket,
+            now,
+            'CAPABILITY_DENIED',
+            'files.read ist nicht wirksam freigegeben',
+            message.messageId,
+          );
+          return;
+        }
+
+        await touchPresence(now);
+
+        if (FILES_RESPONSE_TYPES.has(message.type)) {
+          if (message.relatesTo === undefined || message.relatesTo === null) {
+            sendError(
+              socket,
+              now,
+              'INVALID_MESSAGE',
+              'Antwort ohne relatesTo laesst sich keiner Anfrage zuordnen',
+              message.messageId,
+            );
+            return;
+          }
+          const accepted = context.agentConnections.resolveResponse(
+            principal.device.id,
+            message.relatesTo,
+            message.payload,
+          );
+          if (!accepted) {
+            sendError(
+              socket,
+              now,
+              'SESSION_EXPIRED',
+              'Antwort ist zu spaet oder gehoert zu keiner offenen Anfrage',
+              message.messageId,
+            );
+          }
+          return;
+        }
+
+        if (message.type === 'files.download.chunk') {
+          const parsed = downloadChunkSchema.safeParse(message.payload);
+          if (!parsed.success) {
+            sendError(
+              socket,
+              now,
+              'INVALID_MESSAGE',
+              'Ungueltiger files.download.chunk Payload',
+              message.messageId,
+            );
+            return;
+          }
+          const data = decodeChunk(parsed.data.data);
+          if (data === undefined) {
+            sendError(
+              socket,
+              now,
+              'INVALID_MESSAGE',
+              'Chunk ist kein gueltiges base64',
+              message.messageId,
+            );
+            return;
+          }
+          const accepted = context.fileTransfers.handleChunk({
+            deviceId: principal.device.id,
+            transferId: parsed.data.transferId,
+            sequence: parsed.data.sequence,
+            data,
+            last: parsed.data.last,
+            now,
+          });
+          if (!accepted) {
+            sendError(
+              socket,
+              now,
+              'INVALID_MESSAGE',
+              'Chunk gehoert zu keinem offenen Transfer oder verletzt die Reihenfolge',
+              message.messageId,
+            );
+          }
+          return;
+        }
+
+        if (message.type === 'files.download.complete') {
+          const parsed = downloadCompleteSchema.safeParse(message.payload);
+          if (!parsed.success) {
+            sendError(
+              socket,
+              now,
+              'INVALID_MESSAGE',
+              'Ungueltiger files.download.complete Payload',
+              message.messageId,
+            );
+            return;
+          }
+          const accepted = context.fileTransfers.handleComplete({
+            deviceId: principal.device.id,
+            transferId: parsed.data.transferId,
+            totalBytes: parsed.data.totalBytes,
+            sha256: parsed.data.sha256,
+          });
+          if (!accepted) {
+            sendError(
+              socket,
+              now,
+              'INVALID_MESSAGE',
+              'Abschluss passt nicht zum empfangenen Inhalt',
+              message.messageId,
+            );
+          }
+          return;
+        }
+
+        if (message.type === 'files.download.cancel') {
+          const parsed = downloadCancelSchema.safeParse(message.payload);
+          if (!parsed.success || !isTransferCancelReason(parsed.data.reason)) {
+            sendError(
+              socket,
+              now,
+              'INVALID_MESSAGE',
+              'Ungueltiger files.download.cancel Payload',
+              message.messageId,
+            );
+            return;
+          }
+          context.fileTransfers.cancelFromDevice(
+            principal.device.id,
+            parsed.data.transferId,
+            parsed.data.reason,
+          );
+          return;
+        }
+
+        sendError(socket, now, 'UNSUPPORTED', 'Unbekannter files-Nachrichtentyp', message.messageId);
+      };
+
       const processFrame = async (raw: unknown): Promise<void> => {
         if (closed) {
           return;
@@ -429,6 +668,11 @@ export async function registerAgentRoutes(
 
         if (message.type === 'system.info.response') {
           await processSystemInfoResponse(message, now);
+          return;
+        }
+
+        if (message.type.startsWith('files.')) {
+          await processFilesMessage(message, now);
           return;
         }
 
@@ -555,6 +799,15 @@ export async function registerAgentRoutes(
         closed = true;
         clearInterval(heartbeatTimer);
         context.agentConnections.unregister(connection.id);
+        // Only once the device has no connection left: another socket of the same
+        // device could still be carrying the transfer.
+        if (!context.agentConnections.isConnected(principal.device.id)) {
+          context.fileTransfers.cancelForDevice(
+            principal.device.id,
+            'read_error',
+            'agent connection closed',
+          );
+        }
       });
 
       socket.on('error', () => {

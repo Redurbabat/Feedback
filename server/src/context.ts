@@ -6,6 +6,7 @@ import { createSqliteRepositories } from './db/repositories/index.js';
 import type { Repositories } from './db/repositories/types.js';
 import { RateLimiter } from './http/rateLimit.js';
 import { AgentConnectionRegistry } from './services/agentConnections.js';
+import { FileTransferHub } from './services/fileTransfers.js';
 import { createAuditLogger } from './services/audit.js';
 import type { AuditLogger } from './services/audit.js';
 import type { Clock } from './services/clock.js';
@@ -42,6 +43,7 @@ export interface AppContext {
   readonly rateLimiter: RateLimiter;
   readonly pairing: PairingService;
   readonly agentConnections: AgentConnectionRegistry;
+  readonly fileTransfers: FileTransferHub;
   readonly errors: ErrorSink;
 }
 
@@ -88,6 +90,7 @@ export function createAppContext(options: CreateAppContextOptions): AppContext {
     rateLimiter: new RateLimiter(clock),
     pairing,
     agentConnections: new AgentConnectionRegistry(),
+    fileTransfers: new FileTransferHub(),
     errors,
   };
 }

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import {
@@ -8,7 +8,6 @@ import {
   HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_MISS_LIMIT,
   IMPLEMENTED_CAPABILITIES_V1,
-  PROTOCOL_VERSION,
   REMOTE_SESSION_TTL_MS,
 } from '../../constants.js';
 import type { AppContext } from '../../context.js';
@@ -19,7 +18,13 @@ import {
   AgentOfflineError,
   AgentRequestTimeoutError,
 } from '../../services/agentConnections.js';
-import { requireCsrf, requirePrincipal, requireSession } from '../guards.js';
+import {
+  agentFrame,
+  grantedCapabilities,
+  requireBrowserSession,
+  requireOwnedDevice,
+} from '../deviceAccess.js';
+import { requireCsrf } from '../guards.js';
 import { assertBrowserContext } from '../security.js';
 import { parseOrThrow } from '../validation.js';
 
@@ -62,15 +67,6 @@ function isOnline(device: DeviceRecord, now: number, activelyConnected: boolean)
   return now - device.lastSeenAt <= HEARTBEAT_INTERVAL_MS * HEARTBEAT_MISS_LIMIT;
 }
 
-function grantedCapabilities(entries: readonly DeviceCapabilityRecord[]): readonly string[] {
-  return entries
-    .filter((entry) => entry.granted)
-    .map((entry) => entry.capability)
-    .filter((capability) =>
-      (IMPLEMENTED_CAPABILITIES_V1 as readonly string[]).includes(capability),
-    );
-}
-
 function toDeviceView(
   context: AppContext,
   device: DeviceRecord,
@@ -93,50 +89,6 @@ function toDeviceView(
     online: isOnline(device, now, context.agentConnections.isConnected(device.id)),
     serverGrantedCapabilities: grantedCapabilities(capabilities),
   };
-}
-
-/**
- * Builds one request frame. The caller keeps the `messageId`, because that - not the session - is
- * what the answer is correlated on (protocol section 7).
- */
-function agentFrame(
-  type: string,
-  payload: Record<string, unknown>,
-  now: number,
-  sessionId: string | null = null,
-  // One-way notifications still need an id, but nobody waits for them, so a fresh
-  // one is fine. A request whose answer is awaited passes its own.
-  messageId: string = randomUUID(),
-): string {
-  return JSON.stringify({
-    version: PROTOCOL_VERSION,
-    type,
-    messageId,
-    sessionId,
-    timestamp: new Date(now).toISOString(),
-    payload,
-  });
-}
-
-async function requireOwnedDevice(
-  context: AppContext,
-  ownerId: string,
-  id: string,
-): Promise<DeviceRecord> {
-  const device = await context.repositories.devices.findById(id);
-  if (device === undefined || device.ownerId !== ownerId) {
-    throw new ProtocolError('NOT_FOUND', 'Geraet nicht gefunden');
-  }
-  return device;
-}
-
-async function requireBrowserSession(
-  context: AppContext,
-  request: FastifyRequest,
-  reply: FastifyReply,
-): Promise<NonNullable<FastifyRequest['principal']>> {
-  await requireSession(context, request, reply);
-  return requirePrincipal(request);
 }
 
 function parseAuditDetail(value: string | null): unknown {
@@ -326,6 +278,9 @@ export async function registerDeviceRoutes(
     await context.repositories.deviceTokens.revokeAllForDevice(device.id, now);
     await context.repositories.remoteSessions.revokeAllForDevice(device.id, now);
     await context.repositories.deviceCapabilities.clearForDevice(device.id);
+    // Stop the bytes before closing the socket: a transfer in flight must not keep
+    // delivering a file from a device that was just revoked.
+    context.fileTransfers.cancelForDevice(device.id, 'device_revoked', 'Geraet wurde widerrufen');
     context.agentConnections.closeDevice(device.id, 4003, 'device revoked');
 
     await context.audit.record({

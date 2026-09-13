@@ -13,6 +13,7 @@ import { RATE_LIMITS } from './rateLimit.js';
 import { registerAgentRoutes } from './routes/agent.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerDeviceRoutes } from './routes/devices.js';
+import { registerFileRoutes } from './routes/files.js';
 import { registerPairingRoutes } from './routes/pairing.js';
 import { routeRateLimitName } from './requestContext.js';
 import { applyCorsHeaders, applySecurityHeaders, isAllowedOrigin } from './security.js';
@@ -137,6 +138,7 @@ export async function buildApp(context: AppContext): Promise<FastifyInstance> {
       await registerPairingRoutes(instance, context);
       await registerAgentRoutes(instance, context);
       await registerDeviceRoutes(instance, context);
+      await registerFileRoutes(instance, context);
     },
     { prefix: API_PREFIX },
   );
