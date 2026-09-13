@@ -38,13 +38,37 @@ zugehoerigen, dokumentierten Feature.
 
 | Paket | Inhalt |
 | --- | --- |
-| `security` | Keystore-Schluessel, Geraeteidentitaet, Krypto-Hilfsfunktionen, `SecretStore` |
+| `security` | Keystore-Schluessel, Geraeteidentitaet, Krypto-Hilfsfunktionen, `SecretStore`, App-Lock |
 | `protocol` | Konstanten, Fehlercodes, Capabilities, Envelope, ISO-8601 |
 | `pairing` | kanonische Payloads, lokaler Pairing-Nachweis, Clock-Abstraktion |
 | `ui` | Compose-Oberflaeche |
 
 Reine Logik (Kodierungen, Ableitungen, kanonische Payloads, Envelope-Parsing,
 Capability-Berechnung) ist frei von `android.*` und deshalb in JVM-Unit-Tests pruefbar.
+
+## App-Lock
+
+Die Oberflaeche liegt hinter einer lokalen PIN bzw. Passphrase. Details und die bewusst benannten
+Grenzen stehen in `docs/security/SECURITY_MODEL.md`.
+
+| Datei | Rolle |
+| --- | --- |
+| `security/AppLockPolicy.kt` | Eingaberegeln und die Wartezeit-Leiter, rein und testbar |
+| `security/AppLockLockout.kt` | Wartezeit als Start plus Dauer statt absolutem Ablauf |
+| `security/AutoLockPolicy.kt` | Auto-Lock gegen die monotone Uhr |
+| `security/AppLockSettings.kt` | Auto-Lock-Fenster und Biometrie-Schalter, strikt geparst |
+| `security/SensitiveAction.kt` | Aktionen mit Re-Authentisierung und das zugehoerige Fenster |
+| `security/AppLockStore.kt` | PBKDF2-Verifier, Fehlversuchszaehler, Einstellungen |
+| `ui/AppLockScreens.kt` | Setup, Entsperren, Re-Auth-Dialog |
+| `ui/BiometricUnlock.kt` | optionale Biometrie hinter einer Schnittstelle |
+
+Die Policy-Dateien sind frei von `android.*` und deshalb vollstaendig in JVM-Unit-Tests geprueft.
+`AppLockStore` selbst braucht Keystore und `SharedPreferences` und laeuft daher nur auf dem Geraet;
+sein Verhalten steht im physischen Testplan.
+
+Der Schutz ist nicht erzwungen: der Setup-Bildschirm laesst sich mit `Später` verschieben, und ein
+eingerichteter Schutz kann gegen die korrekte Eingabe wieder entfernt werden. Ohne aktiven Schutz
+zeigt die Oberflaeche das dauerhaft als Warnung an.
 
 ## Lokaler Build
 
@@ -91,4 +115,4 @@ Regeln:
 
 Der private Geraeteschluessel wird im Android Keystore erzeugt, verlaesst ihn nicht und wird
 weder exportiert noch protokolliert. Logs enthalten niemals Ticket, `deviceSecret`,
-`deviceToken`, Cookies, `Authorization`-Header oder private Schluessel.
+`deviceToken`, Cookies, `Authorization`-Header, private Schluessel oder die App-Lock-Eingabe.

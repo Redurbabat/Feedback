@@ -12,7 +12,9 @@
 ## Phase 1 - Lokale Android-Basis
 
 - [x] native Compose-Oberflaeche
-- [ ] lokaler App-Lock
+- [x] lokaler App-Lock mit PBKDF2-Verifier, persistentem Rate Limit, Auto-Lock und Re-Auth
+- [x] optionale biometrische Entsperrung als reine Komfortschicht
+- [ ] physischer Test des App-Locks auf echten Geraeten (siehe `docs/testing/ANDROID_DEVICE_MATRIX.md`)
 - [x] Android-Keystore-Identitaet
 - [x] Device-ID/Fingerprint
 - [x] Berechtigungszentrale fuer implementierte Capabilities (`system.info`)
@@ -66,6 +68,16 @@
 - [ ] Bildschirm und Input
 - [ ] Dateien und Systeminformationen
 - [ ] Installer und Updates
+
+## Testabdeckung
+
+Automatisiert: Unit-Tests fuer Protokoll, Pairing-Payloads, Kryptografie-Hilfen, App-Lock-Policy,
+Lockout-Arithmetik, Auto-Lock, Re-Auth-Fenster und Countdown-Formatierung. CI baut zusaetzlich
+Lint und die Debug-APK.
+
+Nicht automatisiert: alles, was echte Hardware braucht. Der Plan dafuer steht in
+`docs/testing/ANDROID_DEVICE_MATRIX.md` und ist vollstaendig als
+**NOT TESTED ON PHYSICAL DEVICE** markiert.
 
 ## Aktueller MVP-Schnitt
 

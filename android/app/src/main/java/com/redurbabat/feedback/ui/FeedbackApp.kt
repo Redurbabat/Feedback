@@ -53,7 +53,10 @@ import com.redurbabat.feedback.security.SensitiveAction
 import com.redurbabat.feedback.security.DeviceIdentity
 
 @Composable
-fun FeedbackApp(controller: FeedbackController) {
+fun FeedbackApp(
+    controller: FeedbackController,
+    biometricGateway: BiometricGateway = BiometricGateway.Unavailable,
+) {
     val state by controller.state.collectAsState()
     val context = LocalContext.current
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -89,7 +92,12 @@ fun FeedbackApp(controller: FeedbackController) {
                 state.appLockConfigured && !state.appUnlocked -> AppLockUnlockScreen(
                     state = state,
                     onUnlock = controller::unlockApp,
-                    onBiometricUnlock = controller::unlockWithBiometrics,
+                    onBiometricUnlock = {
+                        biometricGateway.prompt(
+                            onSuccess = controller::unlockWithBiometrics,
+                            onFailure = controller::reportBiometricUnlockFailed,
+                        )
+                    },
                 )
 
                 !state.appLockConfigured && !state.appLockSetupDeferred -> AppLockSetupScreen(

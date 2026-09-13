@@ -1,13 +1,18 @@
 package com.redurbabat.feedback
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.fragment.app.FragmentActivity
+import com.redurbabat.feedback.ui.AndroidBiometricGateway
 import com.redurbabat.feedback.ui.FeedbackApp
 import com.redurbabat.feedback.ui.FeedbackController
 
-class MainActivity : ComponentActivity() {
+/**
+ * Hosts the management UI. It is a [FragmentActivity] because `androidx.biometric` needs one to
+ * show its prompt; everything else is Compose.
+ */
+class MainActivity : FragmentActivity() {
     private lateinit var controller: FeedbackController
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -15,8 +20,11 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         controller = FeedbackController(applicationContext)
+        val biometricGateway = AndroidBiometricGateway(this)
+        controller.setBiometricUnlockAvailable(biometricGateway.isAvailable())
+
         setContent {
-            FeedbackApp(controller)
+            FeedbackApp(controller = controller, biometricGateway = biometricGateway)
         }
     }
 
@@ -36,6 +44,8 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         if (::controller.isInitialized) {
             controller.onEnterForeground()
+            // Biometric enrolment can change while the app is in the background.
+            controller.setBiometricUnlockAvailable(AndroidBiometricGateway(this).isAvailable())
         }
     }
 
