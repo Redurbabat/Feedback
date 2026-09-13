@@ -19,16 +19,18 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
+      - name: Set up current Android SDK tools
         uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: "15859902"
 
       - name: Install Android API 37
         run: sdkmanager "platforms;android-37" "build-tools;36.0.0"
