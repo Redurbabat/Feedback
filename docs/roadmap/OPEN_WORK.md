@@ -92,7 +92,7 @@ Hardware tatsaechlich benutzt.
 | Milestone | Stand |
 | --- | --- |
 | 4 Media (`media.photos.read`, `media.videos.read`, Photo Picker) | implementiert auf allen drei Seiten, nicht auf Hardware getestet |
-| 5 Screen View (`screen.view`, MediaProjection, MediaCodec, Strom ueber die Agent-Verbindung) | Protokoll, Threat Model und ADR-004 fertig; Code auf allen drei Seiten offen |
+| 5 Screen View (`screen.view`, MediaProjection, MediaCodec, Strom ueber die Agent-Verbindung) | auf allen drei Seiten implementiert, nicht auf Hardware getestet - siehe Abschnitt 4 |
 | 6 Remote Control (`screen.control`, AccessibilityService, Input-Protokoll) | nicht begonnen |
 | 7 Hardening (Fuzzing, Dependency Audit, Batterie-Review) | Threat Model steht, Rest nicht begonnen |
 | 8 Windows-Agent | nicht begonnen |
@@ -100,9 +100,27 @@ Hardware tatsaechlich benutzt.
 Die Reihenfolge bleibt zwingend: Files → Media → Screen View → Remote Control. Bildschirm- und
 Input-Funktionen werden nicht begonnen, bevor Files stabil ist.
 
-Fuer Milestone 5 gilt ausdruecklich `FEEDBACK_CONSTITUTION.md` Punkt 13: ein STUN/TURN-Pfad ist
-Teil des Milestones, nicht eine spaetere Ausbaustufe. Eine reine Peer-to-Peer-Bildschirmfreigabe,
-die nur im selben Netz funktioniert, zaehlt nicht als implementiert.
+Fuer Milestone 5 gilt `FEEDBACK_CONSTITUTION.md` Punkt 13 - und die Entscheidung ist gefallen:
+es gibt **keine** Peer-Strecke. Der Bildstrom laeuft ueber die ohnehin bestehende
+Agent-Verbindung und von dort als SSE ins Control Center (ADR-004). Damit funktioniert er
+ueberall dort, wo die App funktioniert, und es gibt kein STUN/TURN zu betreiben. Was das kostet,
+steht als Bedrohung 4.15 im Threat Model: der Serverbetreiber kann mitsehen.
+
+### Milestone 5, Stand im Detail
+
+| Teil | Stand |
+| --- | --- |
+| Protokoll 8.5, Limits, Threat Model 4.15-4.18, ADR-004 | fertig |
+| Server: `ScreenStreamHub`, vier Endpunkte, SSE-Bruecke | implementiert, 36 Tests gruen |
+| Android: zwei Zustimmungen, Vordergrunddienst, MediaCodec, Fenster und Chunking | implementiert, 40 Tests gruen (die Geraeteteile sind davon nicht abgedeckt) |
+| Control Web: Bildschirm-Tab, SSE-Parser, WebCodecs-Dekoder | implementiert, 23 Tests gruen |
+| Lauf gegen echte Hardware | **offen** |
+
+Was an Milestone 5 grundsaetzlich nicht testbar war und nur in CI kompiliert wurde:
+MediaProjection, MediaCodec, der Vordergrunddienst und die Einwilligungs-Activity. Ob die
+Benachrichtigung wirklich nicht wischbar ist, ob der Stop-Knopf die Projektion sofort beendet und
+ob der Encoder auf einem bestimmten Chipsatz die gewaehlte Aufloesung annimmt, weiss erst ein
+Geraetetest.
 
 ## 4. Bekannte technische Schulden
 

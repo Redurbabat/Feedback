@@ -120,3 +120,57 @@ export interface FilesEntriesResponse {
   entries: FileEntryView[];
   nextCursor?: string | null;
 }
+
+// ------------------------------------------------------------------ screen.view
+
+export type ScreenStatusState = 'pending' | 'granted' | 'declined';
+
+export type ScreenStopReason =
+  | 'owner_stopped'
+  | 'client_cancelled'
+  | 'session_expired'
+  | 'capability_revoked'
+  | 'device_revoked'
+  | 'consent_declined'
+  | 'consent_timeout'
+  | 'projection_stopped'
+  | 'encoder_error'
+  | 'timeout'
+  | 'connection_lost';
+
+export interface ScreenSessionView {
+  sessionId: string;
+  expiresAt: string;
+  maxWidth: number;
+  maxHeight: number;
+  maxFps: number;
+  maxBitrateKbps: number;
+}
+
+export interface ScreenConfigView {
+  width: number;
+  height: number;
+  /** Read out of the device encoder's own SPS, e.g. `avc1.42E01E`. */
+  codec: string;
+  fps: number;
+  /** base64 SPS/PPS in Annex-B. */
+  config: string;
+}
+
+export interface ScreenEndView {
+  reason: ScreenStopReason;
+}
+
+/** One interpreted event from the SSE stream. */
+export type ScreenEvent =
+  | { kind: 'open' }
+  | { kind: 'status'; state: ScreenStatusState }
+  | { kind: 'config'; config: ScreenConfigView }
+  | {
+      kind: 'frame';
+      sequence: number;
+      keyFrame: boolean;
+      timestampUs: number;
+      data: Uint8Array;
+    }
+  | { kind: 'end'; end: ScreenEndView };

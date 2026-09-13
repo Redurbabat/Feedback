@@ -1,3 +1,4 @@
+import { SseParser, interpretScreenEvent } from './screen.ts';
 import type {
   AuditResponse,
   DeviceListResponse,
@@ -8,6 +9,8 @@ import type {
   FilesSessionView,
   FilesSharesResponse,
   SystemInfoResponse,
+  ScreenEvent,
+  ScreenSessionView,
 } from './types.ts';
 
 interface ProtocolErrorBody {
@@ -256,6 +259,101 @@ export class FeedbackApi {
     }
 
     return new Blob(chunks as BlobPart[], { type });
+  }
+
+  // ------------------------------------------------------------ screen.view
+
+  async openScreenSession(deviceId: string): Promise<ScreenSessionView> {
+    return this.request<ScreenSessionView>(
+      `/devices/${encodeURIComponent(deviceId)}/screen/session`,
+      { method: 'POST', body: '{}' },
+      true,
+    );
+  }
+
+  async closeScreenSession(deviceId: string, sessionId: string): Promise<unknown> {
+    return this.request<unknown>(
+      `/devices/${encodeURIComponent(deviceId)}/screen/session`,
+      { method: 'DELETE', body: JSON.stringify({ sessionId }) },
+      true,
+    );
+  }
+
+  async requestScreenKeyframe(deviceId: string, sessionId: string): Promise<unknown> {
+    return this.request<unknown>(
+      `/devices/${encodeURIComponent(deviceId)}/screen/keyframe`,
+      { method: 'POST', body: JSON.stringify({ sessionId }) },
+      true,
+    );
+  }
+
+  /**
+   * Consumes the screen stream until it ends or the caller aborts.
+   *
+   * `fetch` rather than `EventSource`, for three reasons: EventSource cannot be
+   * aborted properly, it reconnects on its own (which would silently ask the owner
+   * for consent again), and it cannot carry credentials to another origin. Reading
+   * the body as a stream also means the parser sees exactly what the network
+   * delivered, boundaries and all.
+   */
+  async streamScreen(
+    deviceId: string,
+    sessionId: string,
+    onEvent: (event: ScreenEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const query = new URLSearchParams({ sessionId });
+    let response: Response;
+    try {
+      response = await fetch(
+        `${this.base}/api/v1/devices/${encodeURIComponent(deviceId)}/screen/stream?${query.toString()}`,
+        {
+          method: 'GET',
+          credentials: 'include',
+          cache: 'no-store',
+          headers: { Accept: 'text/event-stream' },
+          ...(signal === undefined ? {} : { signal }),
+        },
+      );
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw error;
+      }
+      throw new ApiError(0, null, 'Der Feedback-Server ist nicht erreichbar.');
+    }
+
+    if (!response.ok) {
+      throw await errorFromResponse(response);
+    }
+    const body = response.body;
+    if (body === null) {
+      throw new ApiError(0, null, 'Der Bildstrom kam ohne Inhalt an.');
+    }
+
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    const parser = new SseParser();
+    try {
+      for (;;) {
+        const step = await reader.read();
+        if (step.done) {
+          break;
+        }
+        if (step.value === undefined) {
+          continue;
+        }
+        // `stream: true` matters: a multi-byte character can straddle two chunks, and
+        // so can an event boundary.
+        for (const message of parser.push(decoder.decode(step.value, { stream: true }))) {
+          const event = interpretScreenEvent(message);
+          if (event !== null) {
+            onEvent(event);
+          }
+        }
+      }
+    } finally {
+      reader.cancel().catch(() => undefined);
+    }
   }
 
   private async request<T>(path: string, init: RequestInit, csrf = false): Promise<T> {

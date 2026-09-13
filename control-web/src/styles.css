@@ -626,3 +626,25 @@ input:focus {
     background: #59616e;
   }
 }
+
+/*
+ * The screen view.
+ *
+ * A fixed aspect ratio is deliberately not set: the device reports its own encoder
+ * size, and letterboxing a phone display into a guessed box would show a picture
+ * that is subtly not what is on the phone.
+ */
+.screen-canvas {
+  width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  background: #000;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.row-gap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

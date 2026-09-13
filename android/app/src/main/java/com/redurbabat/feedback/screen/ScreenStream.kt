@@ -104,24 +104,23 @@ object ScreenEncoderPlan {
         val width = align((displayWidth * scale).toInt())
         val height = align((displayHeight * scale).toInt())
 
-        val fps = request.maxFps.coerceIn(1, ProtocolConstants.SCREEN_MAX_FPS)
-        val bitrateCap = if (request.maxBitrateKbps <= 0) {
-            ProtocolConstants.SCREEN_MAX_BITRATE_KBPS
-        } else {
-            minOf(request.maxBitrateKbps, ProtocolConstants.SCREEN_MAX_BITRATE_KBPS)
-        }
+        // Same rule for all three: a value the server did not send, or sent as nonsense, means
+        // "use the protocol limit" - not "use one frame per second". Treating 0 as a real
+        // request would turn a missing field into a slideshow.
+        val fps = capped(request.maxFps, ProtocolConstants.SCREEN_MAX_FPS)
+        val bitrateCap = capped(request.maxBitrateKbps, ProtocolConstants.SCREEN_MAX_BITRATE_KBPS)
         val wanted = (width.toDouble() * height.toDouble() * fps.toDouble() * BITS_PER_PIXEL / 1000.0).toInt()
         val bitrateKbps = wanted.coerceIn(MIN_BITRATE_KBPS, maxOf(MIN_BITRATE_KBPS, bitrateCap))
 
         return ScreenEncoderSettings(width = width, height = height, fps = fps, bitrateKbps = bitrateKbps)
     }
 
-    private fun clampCap(requested: Int): Int {
-        if (requested <= 0) {
-            return ProtocolConstants.SCREEN_MAX_DIMENSION
-        }
-        return minOf(requested, ProtocolConstants.SCREEN_MAX_DIMENSION)
-    }
+    private fun clampCap(requested: Int): Int =
+        capped(requested, ProtocolConstants.SCREEN_MAX_DIMENSION)
+
+    /** The smaller of what was asked for and what the protocol allows; the limit when unusable. */
+    private fun capped(requested: Int, limit: Int): Int =
+        if (requested <= 0) limit else minOf(requested, limit)
 
     private fun align(value: Int): Int {
         val rounded = (value / ALIGNMENT) * ALIGNMENT

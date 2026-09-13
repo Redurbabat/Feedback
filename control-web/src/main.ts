@@ -13,6 +13,12 @@ import {
   sortEntries,
   type Crumb,
 } from './files.ts';
+import {
+  hasVideoDecoder,
+  statusLine,
+  stopReasonLine,
+  streamSummary,
+} from './screen.ts';
 import type {
   AuditEventView,
   DeviceView,
@@ -20,6 +26,10 @@ import type {
   FileShareView,
   FilesSessionView,
   PairingSummary,
+  ScreenConfigView,
+  ScreenEvent,
+  ScreenSessionView,
+  ScreenStopReason,
   SessionView,
   SystemInfoView,
 } from './types.ts';
@@ -54,6 +64,24 @@ class ControlCenterApp {
     total: number | null;
     controller: AbortController;
   } | null = null;
+  private screen: {
+    session: ScreenSessionView;
+    phase: 'awaiting_consent' | 'granted' | 'streaming' | 'ended';
+    config: ScreenConfigView | null;
+    frames: number;
+    controller: AbortController;
+    decoder: VideoDecoder | null;
+    endedBecause: ScreenStopReason | null;
+  } | null = null;
+  /**
+   * Held across renders rather than rebuilt with the rest of the view.
+   *
+   * `render()` replaces the whole tree, and a fresh canvas would be an empty one -
+   * the picture would blink out on every unrelated state change. Re-appending the
+   * same element moves it and keeps its content.
+   */
+  private screenCanvas: HTMLCanvasElement | null = null;
+  private screenSummaryNode: HTMLElement | null = null;
 
   constructor(private readonly root: HTMLElement) {}
 
@@ -263,6 +291,7 @@ class ControlCenterApp {
         // A files session belongs to one device. Carrying it to the next one would
         // show the previous device's shares under a different name.
         this.resetFilesState();
+        this.resetScreenState();
         this.message = null;
         this.render();
       });
@@ -290,6 +319,7 @@ class ControlCenterApp {
         this.capabilityView(device),
         this.systemInfoView(device),
         this.filesView(device),
+        this.screenView(device),
       );
     }
     wrapper.append(this.auditView(device), this.dangerView(device));
@@ -355,6 +385,12 @@ class ControlCenterApp {
         'media.videos.read',
         'Videos (nur lesen)',
         'Nur die Videos, die auf dem Gerät über Androids Fotoauswahl ausgewählt wurden. Fotos bleiben davon unberührt.',
+      ),
+      this.capabilityRow(
+        device,
+        'screen.view',
+        'Bildschirm sehen (nur zusehen)',
+        'Erlaubt, eine Übertragung anzufragen. Jede einzelne Übertragung wird trotzdem am Gerät bestätigt und danach noch einmal von Android selbst. Kein Ton, keine Aufnahme, keine Fernsteuerung - dafür gibt es keinen Protokollbefehl.',
       ),
     );
     return section.root;
@@ -587,6 +623,324 @@ class ControlCenterApp {
     });
     box.append(cancel);
     return box;
+  }
+
+  // ------------------------------------------------------------- screen.view
+
+  private screenView(device: DeviceView): HTMLElement {
+    const section = card('Bildschirm', 'Nur zusehen, nur mit Zustimmung am Gerät');
+    section.body.append(
+      text(
+        'p',
+        'Eine Übertragung zeigt alles, was die Anzeige des Geräts zeigt - auch andere Apps und Benachrichtigungen. Sie beginnt erst, wenn am Gerät zugestimmt und danach Androids eigener Dialog bestätigt wurde. Es wird nichts aufgezeichnet, kein Ton übertragen und nichts ferngesteuert.',
+        'muted small',
+      ),
+    );
+
+    if (!device.serverGrantedCapabilities.includes('screen.view')) {
+      section.body.append(text('p', 'Bildschirm ist serverseitig nicht freigegeben.', 'small'));
+      return section.root;
+    }
+    if (!device.online) {
+      section.body.append(text('p', 'Das Gerät ist offline.', 'small'));
+      return section.root;
+    }
+    if (!hasVideoDecoder()) {
+      // Saying so beats a blank canvas the owner cannot explain.
+      section.body.append(
+        text(
+          'p',
+          'Dieser Browser kann den Bildstrom nicht dekodieren: WebCodecs (VideoDecoder) fehlt. Ein aktueller Chrome, Edge oder Safari kann es.',
+          'small',
+        ),
+      );
+      return section.root;
+    }
+
+    const active = this.screen;
+    if (active === null) {
+      const open = button('Bildschirm anfragen', 'secondary');
+      open.disabled = this.busy;
+      open.addEventListener('click', () => void this.openScreen(device));
+      section.body.append(open);
+      return section.root;
+    }
+
+    const toolbar = div('row-between align-start');
+    toolbar.append(text('span', this.screenPhaseLine(active.phase, active.endedBecause), 'muted small'));
+    const controls = div('row-gap');
+    if (active.phase === 'streaming') {
+      const refresh = button('Bild auffrischen', 'ghost small-button');
+      refresh.addEventListener('click', () => void this.requestScreenKeyframe(device));
+      controls.append(refresh);
+    }
+    const stop = button(active.phase === 'ended' ? 'Schließen' : 'Beenden', 'ghost small-button');
+    stop.addEventListener('click', () => void this.closeScreen(device));
+    controls.append(stop);
+    toolbar.append(controls);
+    section.body.append(toolbar);
+
+    if (active.phase === 'streaming' || active.config !== null) {
+      section.body.append(this.screenCanvasElement(active.config));
+    }
+    const summary = text('p', streamSummary(active.config, active.frames), 'muted small');
+    this.screenSummaryNode = summary;
+    section.body.append(summary);
+    return section.root;
+  }
+
+  private screenPhaseLine(
+    phase: 'awaiting_consent' | 'granted' | 'streaming' | 'ended',
+    endedBecause: ScreenStopReason | null,
+  ): string {
+    switch (phase) {
+      case 'awaiting_consent':
+        return statusLine('pending');
+      case 'granted':
+        return statusLine('granted');
+      case 'streaming':
+        return 'Übertragung läuft. Am Gerät ist sie sichtbar und dort jederzeit zu stoppen.';
+      case 'ended':
+        return endedBecause === null ? 'Beendet.' : stopReasonLine(endedBecause);
+    }
+  }
+
+  private screenCanvasElement(config: ScreenConfigView | null): HTMLCanvasElement {
+    let canvas = this.screenCanvas;
+    if (canvas === null) {
+      canvas = document.createElement('canvas');
+      canvas.className = 'screen-canvas';
+      this.screenCanvas = canvas;
+    }
+    if (config !== null && (canvas.width !== config.width || canvas.height !== config.height)) {
+      canvas.width = config.width;
+      canvas.height = config.height;
+    }
+    return canvas;
+  }
+
+  private async openScreen(device: DeviceView): Promise<void> {
+    this.busy = true;
+    this.message = null;
+    this.render();
+    try {
+      const session = await this.api.openScreenSession(device.id);
+      const controller = new AbortController();
+      this.screen = {
+        session,
+        phase: 'awaiting_consent',
+        config: null,
+        frames: 0,
+        controller,
+        decoder: null,
+        endedBecause: null,
+      };
+      this.busy = false;
+      this.render();
+
+      // Deliberately not awaited: the stream runs until it ends, and the UI has to
+      // keep working while the owner is being asked on the phone.
+      void this.consumeScreenStream(device, session.sessionId, controller);
+    } catch (error) {
+      this.busy = false;
+      this.screen = null;
+      this.message = { kind: 'error', text: this.errorMessage(error) };
+      this.render();
+    }
+  }
+
+  private async consumeScreenStream(
+    device: DeviceView,
+    sessionId: string,
+    controller: AbortController,
+  ): Promise<void> {
+    try {
+      await this.api.streamScreen(
+        device.id,
+        sessionId,
+        (event) => this.handleScreenEvent(event),
+        controller.signal,
+      );
+      // The stream ended without an `end` event: the connection dropped rather than
+      // the session finishing. Saying "connection lost" is closer to the truth than
+      // leaving the last status on screen.
+      this.finishScreen('connection_lost');
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return;
+      }
+      this.message = { kind: 'error', text: this.errorMessage(error) };
+      this.finishScreen('connection_lost');
+    }
+  }
+
+  private handleScreenEvent(event: ScreenEvent): void {
+    const active = this.screen;
+    if (active === null || active.phase === 'ended') {
+      return;
+    }
+    switch (event.kind) {
+      case 'open':
+        return;
+      case 'status':
+        if (event.state === 'granted') {
+          active.phase = 'granted';
+        }
+        if (event.state === 'declined') {
+          this.finishScreen('consent_declined');
+          return;
+        }
+        this.render();
+        return;
+      case 'config':
+        active.config = event.config;
+        active.phase = 'streaming';
+        this.startDecoder(event.config);
+        this.render();
+        return;
+      case 'frame':
+        this.decodeFrame(event.data, event.keyFrame, event.timestampUs);
+        return;
+      case 'end':
+        this.finishScreen(event.end.reason);
+        return;
+    }
+  }
+
+  private startDecoder(config: ScreenConfigView): void {
+    const active = this.screen;
+    if (active === null) {
+      return;
+    }
+    active.decoder?.close();
+    const decoder = new VideoDecoder({
+      output: (frame) => this.drawFrame(frame),
+      error: () => {
+        this.message = {
+          kind: 'error',
+          text: 'Der Bildstrom konnte nicht dekodiert werden.',
+        };
+        this.finishScreen('encoder_error');
+      },
+    });
+    // No `description`: the device sends Annex-B and repeats SPS/PPS before every
+    // keyframe, which is what lets a viewer resynchronise after a lost frame.
+    decoder.configure({
+      codec: config.codec,
+      codedWidth: config.width,
+      codedHeight: config.height,
+      optimizeForLatency: true,
+    });
+    active.decoder = decoder;
+  }
+
+  private decodeFrame(data: Uint8Array, keyFrame: boolean, timestampUs: number): void {
+    const active = this.screen;
+    const decoder = active?.decoder;
+    if (active === null || decoder === undefined || decoder === null) {
+      return;
+    }
+    if (decoder.state !== 'configured') {
+      return;
+    }
+    try {
+      decoder.decode(
+        new EncodedVideoChunk({
+          type: keyFrame ? 'key' : 'delta',
+          timestamp: timestampUs,
+          data: data as BufferSource,
+        }),
+      );
+    } catch {
+      // A chunk the decoder refuses usually means the stream lost its
+      // synchronisation. Asking for a keyframe is cheaper than tearing everything down.
+      const device = this.selectedDevice();
+      if (device !== null) {
+        void this.requestScreenKeyframe(device, true);
+      }
+      return;
+    }
+    active.frames += 1;
+    // Updated in place rather than through render(): at fifteen frames a second a
+    // full rebuild of the page would be the most expensive thing in the browser.
+    if (this.screenSummaryNode !== null) {
+      this.screenSummaryNode.textContent = streamSummary(active.config, active.frames);
+    }
+  }
+
+  private drawFrame(frame: VideoFrame): void {
+    try {
+      const canvas = this.screenCanvas;
+      const context = canvas?.getContext('2d') ?? null;
+      if (canvas !== null && context !== null) {
+        context.drawImage(frame, 0, 0, canvas.width, canvas.height);
+      }
+    } finally {
+      // Not optional: an unclosed VideoFrame holds a decoder buffer, and a few
+      // seconds of that stalls the whole pipeline.
+      frame.close();
+    }
+  }
+
+  private async requestScreenKeyframe(device: DeviceView, quiet = false): Promise<void> {
+    const active = this.screen;
+    if (active === null || active.phase !== 'streaming') {
+      return;
+    }
+    try {
+      await this.api.requestScreenKeyframe(device.id, active.session.sessionId);
+    } catch (error) {
+      if (!quiet) {
+        this.message = { kind: 'error', text: this.errorMessage(error) };
+        this.render();
+      }
+    }
+  }
+
+  private async closeScreen(device: DeviceView): Promise<void> {
+    const active = this.screen;
+    if (active === null) {
+      return;
+    }
+    const sessionId = active.session.sessionId;
+    const wasRunning = active.phase !== 'ended';
+    this.resetScreenState();
+    this.render();
+    if (!wasRunning) {
+      return;
+    }
+    try {
+      await this.api.closeScreenSession(device.id, sessionId);
+    } catch (error) {
+      // The local stream is already gone; the server side is best effort from here.
+      this.message = { kind: 'error', text: this.errorMessage(error) };
+      this.render();
+    }
+  }
+
+  /** Ends the stream on this side and leaves the reason on screen. */
+  private finishScreen(reason: ScreenStopReason): void {
+    const active = this.screen;
+    if (active === null || active.phase === 'ended') {
+      return;
+    }
+    active.phase = 'ended';
+    active.endedBecause = reason;
+    active.decoder?.close();
+    active.decoder = null;
+    active.controller.abort();
+    this.render();
+  }
+
+  private resetScreenState(): void {
+    const active = this.screen;
+    if (active !== null) {
+      active.decoder?.close();
+      active.controller.abort();
+    }
+    this.screen = null;
+    this.screenCanvas = null;
+    this.screenSummaryNode = null;
   }
 
   private resetFilesState(): void {
