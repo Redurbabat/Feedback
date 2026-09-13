@@ -1,4 +1,4 @@
-import { ConfigError, loadConfig } from './config.js';
+import { ConfigError, loadConfig, loadEnvFile } from './config.js';
 import { bootstrapFirstUser } from './bootstrap.js';
 import { createAppContext } from './context.js';
 import { openDatabase } from './db/client.js';
@@ -11,6 +11,7 @@ const MAINTENANCE_INTERVAL_MS = 5 * 60_000;
 const HUB_SWEEP_INTERVAL_MS = 5_000;
 
 async function main(): Promise<void> {
+  loadEnvFile();
   const config = loadConfig();
   const handle = openDatabase(config.databaseFile);
 

@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
+import path from 'node:path';
+
 import cookie from '@fastify/cookie';
+import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
@@ -20,6 +23,26 @@ import { routeRateLimitName } from './requestContext.js';
 import { applyCorsHeaders, applySecurityHeaders, isAllowedOrigin } from './security.js';
 
 const API_PREFIX = '/api/v1';
+
+/**
+ * Optionally serves the built control center from the same origin as the API.
+ *
+ * One origin is the difference between "works" and "works after you configure a reverse proxy":
+ * the HttpOnly session cookie needs no SameSite exception, there is no CORS preflight, and a
+ * single tunnel is enough for a first test against a real phone.
+ *
+ * The plugin only serves files that exist; the API keeps its own prefix, and the shared
+ * not-found handler below decides what an unknown path means. Anything under `/api/v1` answers
+ * in the protocol's error shape rather than with an HTML page.
+ */
+async function registerControlCenter(app: FastifyInstance, context: AppContext): Promise<void> {
+  const root = context.config.staticDir;
+  if (root === undefined) {
+    return;
+  }
+
+  await app.register(fastifyStatic, { root: path.resolve(root), index: ['index.html'] });
+}
 
 /**
  * Builds the Fastify application.
@@ -124,6 +147,17 @@ export async function buildApp(context: AppContext): Promise<FastifyInstance> {
   });
 
   app.setNotFoundHandler((request, reply) => {
+    // The control center is a single page app, so a deep link has to reach index.html rather
+    // than a file that does not exist. Everything under the API prefix, and anything that is not
+    // a plain GET, keeps the protocol error shape - an HTML page there would break every client
+    // that reads section 10.
+    if (
+      config.staticDir !== undefined &&
+      request.method === 'GET' &&
+      !request.url.startsWith(API_PREFIX)
+    ) {
+      return reply.sendFile('index.html');
+    }
     return sendProtocolError(
       request,
       reply,
@@ -132,6 +166,8 @@ export async function buildApp(context: AppContext): Promise<FastifyInstance> {
   });
 
   app.get('/health', async () => ({ status: 'ok' }));
+
+  await registerControlCenter(app, context);
 
   await app.register(
     async (instance) => {

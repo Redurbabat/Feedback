@@ -1,9 +1,10 @@
-import { loadConfig } from '../config.js';
+import { loadConfig, loadEnvFile } from '../config.js';
 import { openDatabase } from './client.js';
 import { runMigrations } from './migrate.js';
 
 /** `npm run migrate` - applies pending SQL migrations and exits. */
 function main(): void {
+  loadEnvFile();
   const config = loadConfig();
   const handle = openDatabase(config.databaseFile);
   try {

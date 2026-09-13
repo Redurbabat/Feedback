@@ -45,6 +45,23 @@ Davor gehoert ein Reverse Proxy oder ein Tunnel.
 Ohne Server mieten, in wenigen Minuten. Ein Tunneldienst (z. B. Cloudflare Tunnel) gibt einen
 oeffentlichen HTTPS-Hostnamen, der auf den lokal laufenden Prozess zeigt.
 
+**Mit einem Befehl:**
+
+```bash
+tools/first-run.sh https://<dein-tunnel-host>
+```
+
+Das Skript legt `.env` an (mit frisch erzeugtem Cookie-Secret), installiert, baut Control Center
+und Server, wendet die Migrationen an und sagt, welcher Befehl als naechstes dran ist. Es richtet
+bewusst **keinen** Tunnel ein: welcher Dienst die Verbindung nach aussen traegt, ist eine
+Vertrauensentscheidung des Besitzers.
+
+Es setzt dabei `FEEDBACK_STATIC_DIR`, sodass der Server das gebaute Control Center **selbst**
+ausliefert. Damit gibt es eine Origin statt zweier: das HttpOnly-Cookie braucht keine Ausnahme,
+es gibt kein CORS, und ein Tunnel genuegt.
+
+Die Schritte einzeln, falls etwas schiefgeht:
+
 ```bash
 # 1. Server vorbereiten
 cd server
@@ -79,9 +96,13 @@ npm ci
 npm run build      # Ergebnis liegt in control-web/dist/
 ```
 
-Der Reverse Proxy bzw. Tunnel leitet `/api/*` an den Server und alles andere auf
-`control-web/dist/`. Liegt das Control Center aus gutem Grund auf einer anderen Origin, wird es
-mit `VITE_FEEDBACK_API_BASE_URL=https://<api-host>` gebaut, und diese Origin muss in
+Mit `FEEDBACK_STATIC_DIR=../control-web/dist` liefert der Server diese Dateien selbst aus - dann
+braucht es keinen Reverse Proxy, nur den Tunnel auf Port 8080. Ein Deployment mit eigenem Proxy
+laesst die Variable weg und leitet `/api/*` an den Server und alles andere auf
+`control-web/dist/`.
+
+Liegt das Control Center aus gutem Grund auf einer anderen Origin, wird es mit
+`VITE_FEEDBACK_API_BASE_URL=https://<api-host>` gebaut, und diese Origin muss in
 `FEEDBACK_ALLOWED_ORIGINS` stehen.
 
 ### 3.2 Dauerhafter Weg: eigener Host

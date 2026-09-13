@@ -1,3 +1,7 @@
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { z } from 'zod';
 
 import { FILE_MAX_DOWNLOAD_BYTES } from './constants.js';
@@ -66,6 +70,14 @@ const envSchema = z.object({
     .min(1)
     .max(FILE_MAX_DOWNLOAD_BYTES)
     .default(FILE_MAX_DOWNLOAD_BYTES),
+  /**
+   * Optional: serve the built control center from this directory.
+   *
+   * Set it and the browser sees a single origin - which means the HttpOnly session cookie just
+   * works, there is no CORS, and one tunnel is enough for a first test. Leave it unset and the
+   * server is an API only, which is what a deployment with its own reverse proxy wants.
+   */
+  FEEDBACK_STATIC_DIR: z.string().min(1).optional(),
   FEEDBACK_TRUST_PROXY: booleanFromEnv.default('false'),
   FEEDBACK_LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
@@ -84,6 +96,8 @@ export interface AppConfig {
   readonly allowedOrigins: readonly string[];
   readonly sessionTtlMs: number;
   readonly fileMaxDownloadBytes: number;
+  /** Built control center to serve from the API origin, or undefined for API only. */
+  readonly staticDir: string | undefined;
   readonly trustProxy: boolean;
   readonly logLevel: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent';
   readonly bootstrap:
@@ -102,6 +116,32 @@ export class ConfigError extends Error {
  * Parses and validates the environment. Throws {@link ConfigError} with a
  * readable, secret-free summary when the configuration is incomplete.
  */
+/**
+ * Reads `server/.env` into the environment, if there is one.
+ *
+ * `.env.example` and BETRIEB.md both describe a `.env` file, but nothing ever read it: every
+ * documented first run died on "FEEDBACK_COOKIE_SECRET fehlt" until the values were exported by
+ * hand. Found by writing the first-run script and running it.
+ *
+ * `process.loadEnvFile` is built into Node 22 - no dependency - and it does not overwrite
+ * variables that are already set. That order is the right one: a systemd unit or a container
+ * environment must win over a file left lying around from an earlier test.
+ *
+ * Called from the entry points, never from library code, so a test never picks up a developer's
+ * local file.
+ */
+export function loadEnvFile(): void {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  // src/config.ts in development, dist/config.js after a build: the package root is one up.
+  const candidates = [path.join(process.cwd(), '.env'), path.resolve(here, '..', '.env')];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      process.loadEnvFile(candidate);
+      return;
+    }
+  }
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const candidate: Record<string, unknown> = {};
   for (const key of Object.keys(envSchema.shape)) {
@@ -145,6 +185,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     allowedOrigins: value.FEEDBACK_ALLOWED_ORIGINS,
     sessionTtlMs: value.FEEDBACK_SESSION_TTL_MS,
     fileMaxDownloadBytes: value.FEEDBACK_FILE_MAX_DOWNLOAD_BYTES,
+    staticDir: value.FEEDBACK_STATIC_DIR,
     trustProxy: value.FEEDBACK_TRUST_PROXY,
     logLevel: value.FEEDBACK_LOG_LEVEL,
     bootstrap:

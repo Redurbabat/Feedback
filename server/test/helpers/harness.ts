@@ -40,6 +40,9 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     allowedOrigins: [TEST_ORIGIN],
     sessionTtlMs: 12 * 60 * 60 * 1000,
     fileMaxDownloadBytes: FILE_MAX_DOWNLOAD_BYTES,
+    // API only in tests: serving the control center is a deployment convenience, and a test
+    // that quietly depended on a built dist/ would fail for the wrong reason.
+    staticDir: undefined,
     trustProxy: false,
     logLevel: 'silent',
     bootstrap: undefined,

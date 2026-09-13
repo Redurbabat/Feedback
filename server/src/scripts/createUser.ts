@@ -1,6 +1,6 @@
 import { createInterface } from 'node:readline/promises';
 
-import { loadConfig } from '../config.js';
+import { loadConfig, loadEnvFile } from '../config.js';
 import { hashPassword } from '../crypto/password.js';
 import { openDatabase } from '../db/client.js';
 import { runMigrations } from '../db/migrate.js';
@@ -70,6 +70,7 @@ async function readPassword(): Promise<string> {
 
 async function main(): Promise<void> {
   const args = parseArguments(process.argv.slice(2));
+  loadEnvFile();
   const config = loadConfig();
   const handle = openDatabase(config.databaseFile);
 
