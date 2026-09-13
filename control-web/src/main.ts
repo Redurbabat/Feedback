@@ -1,9 +1,23 @@
 import './styles.css';
 
 import { ApiError, FeedbackApi } from './api.ts';
+import {
+  currentDirectoryId,
+  enterDirectory,
+  entryMeta,
+  formatCountdown,
+  progressLabel,
+  rootCrumb,
+  secondsUntil,
+  sortEntries,
+  type Crumb,
+} from './files.ts';
 import type {
   AuditEventView,
   DeviceView,
+  FileEntryView,
+  FileShareView,
+  FilesSessionView,
   PairingSummary,
   SessionView,
   SystemInfoView,
@@ -23,6 +37,19 @@ class ControlCenterApp {
   private message: { kind: 'info' | 'error'; text: string } | null = null;
   private busy = false;
   private pollTimer: number | null = null;
+  private filesSession: FilesSessionView | null = null;
+  private fileShares: FileShareView[] | null = null;
+  private activeShare: FileShareView | null = null;
+  private filePath: Crumb[] = [];
+  private fileEntries: FileEntryView[] = [];
+  private fileCursor: string | null = null;
+  private download: {
+    fileId: string;
+    name: string;
+    received: number;
+    total: number | null;
+    controller: AbortController;
+  } | null = null;
 
   constructor(private readonly root: HTMLElement) {}
 
@@ -229,6 +256,9 @@ class ControlCenterApp {
         this.selectedDeviceId = device.id;
         this.systemInfo = null;
         this.auditEvents = [];
+        // A files session belongs to one device. Carrying it to the next one would
+        // show the previous device's shares under a different name.
+        this.resetFilesState();
         this.message = null;
         this.render();
       });
@@ -252,7 +282,11 @@ class ControlCenterApp {
     const wrapper = div('device-detail');
     wrapper.append(this.deviceHero(device));
     if (device.revokedAt === null) {
-      wrapper.append(this.capabilityView(device), this.systemInfoView(device));
+      wrapper.append(
+        this.capabilityView(device),
+        this.systemInfoView(device),
+        this.filesView(device),
+      );
     }
     wrapper.append(this.auditView(device), this.dangerView(device));
     return wrapper;
@@ -288,29 +322,49 @@ class ControlCenterApp {
 
   private capabilityView(device: DeviceView): HTMLElement {
     const section = card('Berechtigungen', 'Serverseitige Freigaben');
-    const granted = device.serverGrantedCapabilities.includes('system.info');
-    const row = div('permission-row');
-    const copy = div('stack tiny-gap');
-    copy.append(
-      text('strong', 'Systeminformationen'),
+    section.body.append(
       text(
-        'span',
-        'Erlaubt Modell, Android-Version, Akku, Speicher und Netzwerktyp. Zusätzlich muss die Freigabe lokal auf dem Android-Gerät aktiv sein.',
+        'p',
+        'Eine Funktion wirkt nur, wenn sie hier UND lokal auf dem Android-Gerät freigegeben ist. Beides einzeln entziehbar.',
         'muted small',
       ),
+      this.capabilityRow(
+        device,
+        'system.info',
+        'Systeminformationen',
+        'Modell, Android-Version, Akku, Speicher und Netzwerktyp. Keine IMEI, MAC-Adresse oder Telefonnummer.',
+      ),
+      this.capabilityRow(
+        device,
+        'files.read',
+        'Dateizugriff (nur lesen)',
+        'Auflisten und Herunterladen in den Bereichen, die auf dem Gerät ausdrücklich freigegeben wurden. Kein Ändern, Löschen oder Ausführen.',
+      ),
     );
+    return section.root;
+  }
+
+  private capabilityRow(
+    device: DeviceView,
+    capability: string,
+    title: string,
+    description: string,
+  ): HTMLElement {
+    const granted = device.serverGrantedCapabilities.includes(capability);
+    const row = div('permission-row');
+    const copy = div('stack tiny-gap');
+    copy.append(text('strong', title), text('span', description, 'muted small'));
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = `toggle${granted ? ' on' : ''}`;
     toggle.setAttribute('role', 'switch');
     toggle.setAttribute('aria-checked', String(granted));
-    toggle.setAttribute('aria-label', 'Systeminformationen serverseitig freigeben');
+    toggle.setAttribute('aria-label', `${title} serverseitig freigeben`);
     toggle.disabled = this.busy;
     toggle.append(document.createElement('span'));
-    toggle.addEventListener('click', () => void this.setSystemInfoCapability(device, !granted));
+    toggle.addEventListener('click', () => void this.setCapability(device, capability, !granted));
     row.append(copy, toggle);
-    section.body.append(row);
-    return section.root;
+    return row;
   }
 
   private systemInfoView(device: DeviceView): HTMLElement {
@@ -349,6 +403,300 @@ class ControlCenterApp {
       ),
     );
     return section.root;
+  }
+
+
+  private filesView(device: DeviceView): HTMLElement {
+    const section = card('Dateien', 'Nur lesen, nur freigegebene Bereiche');
+    const granted = device.serverGrantedCapabilities.includes('files.read');
+
+    section.body.append(
+      text(
+        'p',
+        'Sichtbar ist ausschließlich, was auf dem Gerät über Androids Dateiauswahl freigegeben wurde. Es gibt kein Ändern, Löschen, Umbenennen oder Ausführen - dafür existiert nicht einmal ein Protokollbefehl.',
+        'muted small',
+      ),
+    );
+
+    if (!granted) {
+      section.body.append(
+        text('p', 'Dateizugriff ist serverseitig nicht freigegeben.', 'small'),
+      );
+      return section.root;
+    }
+    if (!device.online) {
+      section.body.append(text('p', 'Das Gerät ist offline.', 'small'));
+      return section.root;
+    }
+
+    if (this.filesSession === null) {
+      const open = button('Dateien öffnen', 'secondary');
+      open.disabled = this.busy;
+      open.addEventListener('click', () => void this.openFiles(device));
+      section.body.append(open);
+      return section.root;
+    }
+
+    const remaining = secondsUntil(this.filesSession.expiresAt, Date.now());
+    const toolbar = div('row-between align-start');
+    toolbar.append(
+      text('span', `Sitzung läuft ab in ${formatCountdown(remaining)}`, 'muted small'),
+    );
+    const close = button('Sitzung beenden', 'ghost small-button');
+    close.disabled = this.busy;
+    close.addEventListener('click', () => void this.closeFiles(device));
+    toolbar.append(close);
+    section.body.append(toolbar);
+
+    if (this.activeShare === null) {
+      section.body.append(this.shareListView(device));
+    } else {
+      section.body.append(this.entryListView(device));
+    }
+
+    if (this.download !== null) {
+      section.body.append(this.downloadView());
+    }
+    return section.root;
+  }
+
+  private shareListView(device: DeviceView): HTMLElement {
+    const list = div('stack');
+    const shares = this.fileShares ?? [];
+    if (shares.length === 0) {
+      list.append(
+        text(
+          'p',
+          'Auf dem Gerät ist noch kein Bereich freigegeben. Die Freigabe erfolgt dort unter „Freigegebene Bereiche".',
+          'small',
+        ),
+      );
+      return list;
+    }
+    for (const share of shares) {
+      const row = div('permission-row');
+      const copy = div('stack tiny-gap');
+      copy.append(
+        text('strong', share.displayName),
+        text('span', share.kind === 'tree' ? 'Ordner' : 'Einzelne Datei', 'muted small'),
+      );
+      const open = button('Öffnen', 'ghost small-button');
+      open.disabled = this.busy;
+      open.addEventListener('click', () => void this.openShare(device, share));
+      row.append(copy, open);
+      list.append(row);
+    }
+    return list;
+  }
+
+  private entryListView(device: DeviceView): HTMLElement {
+    const list = div('stack');
+
+    const crumbs = div('row-wrap tiny-gap');
+    this.filePath.forEach((crumb, index) => {
+      const isLast = index === this.filePath.length - 1;
+      if (isLast) {
+        crumbs.append(text('span', crumb.label, 'small'));
+        return;
+      }
+      const link = button(crumb.label, 'ghost small-button');
+      link.disabled = this.busy;
+      link.addEventListener('click', () => void this.navigateTo(device, crumb));
+      crumbs.append(link, text('span', '/', 'muted small'));
+    });
+    const back = button('Zurück zu den Bereichen', 'ghost small-button');
+    back.disabled = this.busy;
+    back.addEventListener('click', () => {
+      this.activeShare = null;
+      this.fileEntries = [];
+      this.fileCursor = null;
+      this.filePath = [];
+      this.render();
+    });
+    list.append(crumbs, back);
+
+    if (this.fileEntries.length === 0) {
+      list.append(text('p', 'Dieser Ordner ist leer.', 'small'));
+      return list;
+    }
+
+    for (const entry of sortEntries(this.fileEntries)) {
+      const row = div('permission-row');
+      const copy = div('stack tiny-gap');
+      copy.append(text('strong', entry.name), text('span', entryMeta(entry), 'muted small'));
+      const action =
+        entry.kind === 'directory'
+          ? button('Öffnen', 'ghost small-button')
+          : button('Herunterladen', 'ghost small-button');
+      action.disabled = this.busy || this.download !== null;
+      if (entry.kind === 'directory') {
+        action.addEventListener('click', () => {
+          void this.navigateTo(device, { directoryId: entry.id, label: entry.name });
+        });
+      } else {
+        action.addEventListener('click', () => void this.startDownload(device, entry));
+      }
+      row.append(copy, action);
+      list.append(row);
+    }
+
+    if (this.fileCursor !== null) {
+      const more = button('Mehr laden', 'secondary');
+      more.disabled = this.busy;
+      more.addEventListener('click', () => void this.loadEntries(device, { append: true }));
+      list.append(more);
+    }
+    return list;
+  }
+
+  private downloadView(): HTMLElement {
+    const active = this.download;
+    const box = div('stack tiny-gap download-progress');
+    if (active === null) {
+      return box;
+    }
+    box.append(
+      text('strong', active.name),
+      text('span', progressLabel(active.received, active.total), 'muted small'),
+    );
+    const cancel = button('Abbrechen', 'ghost small-button');
+    cancel.addEventListener('click', () => {
+      this.cancelDownload();
+    });
+    box.append(cancel);
+    return box;
+  }
+
+  private resetFilesState(): void {
+    this.cancelDownload();
+    this.filesSession = null;
+    this.fileShares = null;
+    this.activeShare = null;
+    this.filePath = [];
+    this.fileEntries = [];
+    this.fileCursor = null;
+  }
+
+  private async openFiles(device: DeviceView): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      this.filesSession = await this.api.openFilesSession(device.id);
+      const response = await this.api.filesShares(device.id, this.filesSession.sessionId);
+      this.fileShares = response.shares;
+    } catch (error) {
+      this.resetFilesState();
+      this.handleApiError(error);
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+
+  private async closeFiles(device: DeviceView): Promise<void> {
+    const session = this.filesSession;
+    if (this.busy || session === null) return;
+    this.busy = true;
+    try {
+      await this.api.closeFilesSession(device.id, session.sessionId);
+      this.message = { kind: 'info', text: 'Dateisitzung beendet.' };
+    } catch (error) {
+      this.handleApiError(error);
+    } finally {
+      this.resetFilesState();
+      this.busy = false;
+      this.render();
+    }
+  }
+
+  private async openShare(device: DeviceView, share: FileShareView): Promise<void> {
+    this.activeShare = share;
+    this.filePath = [rootCrumb(share.displayName)];
+    this.fileEntries = [];
+    this.fileCursor = null;
+    await this.loadEntries(device, { append: false });
+  }
+
+  private async navigateTo(device: DeviceView, crumb: Crumb): Promise<void> {
+    this.filePath = enterDirectory(this.filePath, crumb);
+    this.fileEntries = [];
+    this.fileCursor = null;
+    await this.loadEntries(device, { append: false });
+  }
+
+  private async loadEntries(device: DeviceView, options: { append: boolean }): Promise<void> {
+    const session = this.filesSession;
+    const share = this.activeShare;
+    if (this.busy || session === null || share === null) return;
+    this.busy = true;
+    try {
+      const response = await this.api.filesEntries(device.id, {
+        sessionId: session.sessionId,
+        shareId: share.shareId,
+        directoryId: currentDirectoryId(this.filePath),
+        cursor: options.append ? this.fileCursor : null,
+      });
+      this.fileEntries = options.append
+        ? [...this.fileEntries, ...response.entries]
+        : response.entries;
+      this.fileCursor = response.nextCursor ?? null;
+    } catch (error) {
+      this.handleApiError(error);
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+
+  private async startDownload(device: DeviceView, entry: FileEntryView): Promise<void> {
+    const session = this.filesSession;
+    const share = this.activeShare;
+    if (session === null || share === null || this.download !== null) return;
+
+    const controller = new AbortController();
+    this.download = {
+      fileId: entry.id,
+      name: entry.name,
+      received: 0,
+      total: entry.size,
+      controller,
+    };
+    this.render();
+
+    try {
+      const blob = await this.api.downloadFile(
+        device.id,
+        { sessionId: session.sessionId, shareId: share.shareId, fileId: entry.id },
+        {
+          signal: controller.signal,
+          onProgress: (received, total) => {
+            if (this.download !== null && this.download.fileId === entry.id) {
+              this.download.received = received;
+              this.download.total = total ?? this.download.total;
+              this.render();
+            }
+          },
+        },
+      );
+      saveBlob(blob, entry.name);
+      this.message = { kind: 'info', text: `„${entry.name}" wurde heruntergeladen.` };
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        this.message = { kind: 'info', text: 'Download abgebrochen.' };
+      } else {
+        this.handleApiError(error);
+      }
+    } finally {
+      this.download = null;
+      this.render();
+    }
+  }
+
+  private cancelDownload(): void {
+    if (this.download !== null) {
+      this.download.controller.abort();
+      this.download = null;
+    }
   }
 
   private auditView(device: DeviceView): HTMLElement {
@@ -507,18 +855,35 @@ class ControlCenterApp {
     if (renderAfter) this.render();
   }
 
-  private async setSystemInfoCapability(device: DeviceView, enabled: boolean): Promise<void> {
+  private async setCapability(
+    device: DeviceView,
+    capability: string,
+    enabled: boolean,
+  ): Promise<void> {
     if (this.busy) return;
     this.busy = true;
     try {
-      await this.api.setCapabilities(device.id, enabled ? ['system.info'] : []);
+      // The endpoint replaces the whole set, so the new list is built from what the
+      // device already has - toggling one capability must not silently drop another.
+      const next = new Set(device.serverGrantedCapabilities);
+      if (enabled) {
+        next.add(capability);
+      } else {
+        next.delete(capability);
+      }
+      await this.api.setCapabilities(device.id, [...next]);
       this.message = {
         kind: 'info',
         text: enabled
-          ? 'Systeminformationen sind serverseitig freigegeben. Die lokale Android-Freigabe bleibt zusätzlich erforderlich.'
-          : 'Serverseitige Freigabe für Systeminformationen entfernt.',
+          ? 'Serverseitig freigegeben. Die lokale Android-Freigabe bleibt zusätzlich erforderlich.'
+          : 'Serverseitige Freigabe entfernt.',
       };
-      this.systemInfo = null;
+      if (capability === 'system.info') {
+        this.systemInfo = null;
+      }
+      if (capability === 'files.read' && !enabled) {
+        this.resetFilesState();
+      }
       await this.refreshDevices(false);
     } catch (error) {
       this.handleApiError(error);
@@ -738,6 +1103,25 @@ function formatBytes(value: number): string {
   }
   const unit = units[index] ?? 'B';
   return `${amount.toLocaleString('de-DE', { maximumFractionDigits: index === 0 ? 0 : 1 })} ${unit}`;
+}
+
+/**
+ * Hands the finished file to the browser.
+ *
+ * The object URL is released immediately after the click: it holds the whole blob
+ * in memory, and a download page that stays open would otherwise keep every file
+ * the user ever fetched.
+ */
+function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.rel = 'noopener';
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function div(className?: string): HTMLDivElement {

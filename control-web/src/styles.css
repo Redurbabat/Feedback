@@ -186,6 +186,25 @@ h2 {
   gap: 3px;
 }
 
+/* Breadcrumb of the file browser: wraps instead of pushing the card wide. */
+.row-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.row-wrap.tiny-gap {
+  gap: 4px;
+}
+
+/* A download that is running gets its own block so the progress line does not
+   sit inside the file list and move rows around while it updates. */
+.download-progress {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
 .card,
 .hero-card,
 .empty-state {

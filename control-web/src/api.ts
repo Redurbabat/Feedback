@@ -4,6 +4,9 @@ import type {
   DeviceView,
   PairingSummary,
   SessionView,
+  FilesEntriesResponse,
+  FilesSessionView,
+  FilesSharesResponse,
   SystemInfoResponse,
 } from './types.ts';
 
@@ -128,6 +131,133 @@ export class FeedbackApi {
     );
   }
 
+  // ------------------------------------------------------------- files.read
+
+  async openFilesSession(deviceId: string): Promise<FilesSessionView> {
+    return this.request<FilesSessionView>(
+      `/devices/${encodeURIComponent(deviceId)}/files/session`,
+      { method: 'POST', body: '{}' },
+      true,
+    );
+  }
+
+  async closeFilesSession(deviceId: string, sessionId: string): Promise<unknown> {
+    return this.request<unknown>(
+      `/devices/${encodeURIComponent(deviceId)}/files/session`,
+      { method: 'DELETE', body: JSON.stringify({ sessionId }) },
+      true,
+    );
+  }
+
+  async filesShares(deviceId: string, sessionId: string): Promise<FilesSharesResponse> {
+    const query = new URLSearchParams({ sessionId });
+    return this.request<FilesSharesResponse>(
+      `/devices/${encodeURIComponent(deviceId)}/files/shares?${query.toString()}`,
+      { method: 'GET' },
+    );
+  }
+
+  async filesEntries(
+    deviceId: string,
+    params: {
+      sessionId: string;
+      shareId: string;
+      directoryId?: string | null;
+      cursor?: string | null;
+    },
+  ): Promise<FilesEntriesResponse> {
+    const query = new URLSearchParams({
+      sessionId: params.sessionId,
+      shareId: params.shareId,
+    });
+    if (params.directoryId !== undefined && params.directoryId !== null) {
+      query.set('directoryId', params.directoryId);
+    }
+    if (params.cursor !== undefined && params.cursor !== null) {
+      query.set('cursor', params.cursor);
+    }
+    return this.request<FilesEntriesResponse>(
+      `/devices/${encodeURIComponent(deviceId)}/files/entries?${query.toString()}`,
+      { method: 'GET' },
+    );
+  }
+
+  /**
+   * Downloads one file, reporting progress as the bytes arrive.
+   *
+   * The body is read as a stream rather than with response.blob() so a running
+   * download can be cancelled and so the user sees movement instead of a frozen
+   * button. The assembled Blob still lives in memory - the browser cannot stream
+   * to disk without the File System Access API - which is why the size limit
+   * matters on this side too.
+   */
+  async downloadFile(
+    deviceId: string,
+    params: { sessionId: string; shareId: string; fileId: string },
+    options: {
+      signal?: AbortSignal;
+      onProgress?: (received: number, total: number | null) => void;
+    } = {},
+  ): Promise<Blob> {
+    const query = new URLSearchParams(params);
+    let response: Response;
+    try {
+      response = await fetch(
+        `${this.base}/api/v1/devices/${encodeURIComponent(deviceId)}/files/content?${query.toString()}`,
+        {
+          method: 'GET',
+          credentials: 'include',
+          cache: 'no-store',
+          headers: { Accept: 'application/octet-stream' },
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+        },
+      );
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw error;
+      }
+      throw new ApiError(0, null, 'Der Feedback-Server ist nicht erreichbar.');
+    }
+
+    if (!response.ok) {
+      throw await errorFromResponse(response);
+    }
+
+    const lengthHeader = response.headers.get('content-length');
+    const total = lengthHeader === null ? null : Number.parseInt(lengthHeader, 10);
+    const expected = total !== null && Number.isFinite(total) ? total : null;
+    const type = response.headers.get('content-type') ?? 'application/octet-stream';
+
+    const body = response.body;
+    if (body === null) {
+      return response.blob();
+    }
+
+    const reader = body.getReader();
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    for (;;) {
+      const step = await reader.read();
+      if (step.done) {
+        break;
+      }
+      if (step.value !== undefined) {
+        chunks.push(step.value);
+        received += step.value.byteLength;
+        options.onProgress?.(received, expected);
+      }
+    }
+
+    // The server destroys the response when a digest or length does not match, which
+    // usually surfaces as a read error above. When it does not, a short body must
+    // still not be handed over as if it were the whole file.
+    if (expected !== null && received !== expected) {
+      throw new ApiError(0, null, 'Die Übertragung wurde unvollständig beendet.');
+    }
+
+    return new Blob(chunks as BlobPart[], { type });
+  }
+
   private async request<T>(path: string, init: RequestInit, csrf = false): Promise<T> {
     const headers = new Headers(init.headers);
     headers.set('Accept', 'application/json');
@@ -174,6 +304,25 @@ export class FeedbackApi {
 
     return body as T;
   }
+}
+
+async function errorFromResponse(response: Response): Promise<ApiError> {
+  let body: unknown = {};
+  try {
+    const text = await response.text();
+    if (text.trim() !== '') {
+      body = JSON.parse(text) as unknown;
+    }
+  } catch {
+    body = {};
+  }
+  const record = isRecord(body) ? (body as ProtocolErrorBody) : {};
+  const code = typeof record.error?.code === 'string' ? record.error.code : null;
+  const message =
+    typeof record.error?.message === 'string'
+      ? record.error.message
+      : `Serveranfrage fehlgeschlagen (${response.status}).`;
+  return new ApiError(response.status, code, message);
 }
 
 function normalizeBase(value: string): string {

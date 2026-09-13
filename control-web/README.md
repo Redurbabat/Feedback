@@ -47,3 +47,16 @@ npm run build
 ```
 
 Das statische Ergebnis liegt anschliessend unter `control-web/dist/` und sollte hinter HTTPS ausgeliefert werden. Die Origin muss serverseitig in der erlaubten Control-Center-Origin-Liste stehen.
+
+## Dateien
+
+Die Geraeteseite enthaelt einen Bereich "Dateien". Er zeigt ausschliesslich die Bereiche, die der
+Besitzer auf dem Geraet ueber Androids Dateiauswahl freigegeben hat, erlaubt Navigation in
+Unterordner und Download mit Fortschritt und Abbruch.
+
+Es gibt keine Aktion zum Loeschen, Umbenennen oder Ausfuehren - dafuer existiert nicht einmal ein
+Protokollbefehl. `files.read` ist ausschliesslich lesend.
+
+Ein Download wird gestreamt gelesen, damit Fortschritt und Abbruch funktionieren, am Ende aber im
+Browserspeicher zusammengesetzt. Das Download-Limit des Servers begrenzt deshalb auch, was die
+Oberflaeche verkraftet.

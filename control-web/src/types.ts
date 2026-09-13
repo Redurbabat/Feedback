@@ -82,3 +82,35 @@ export interface AuditEventView {
 export interface AuditResponse {
   events: AuditEventView[];
 }
+
+export interface FileShareView {
+  shareId: string;
+  displayName: string;
+  kind: 'tree' | 'file';
+  addedAt: string;
+}
+
+export interface FileEntryView {
+  id: string;
+  name: string;
+  mimeType: string | null;
+  size: number | null;
+  modifiedAt: string | null;
+  kind: 'file' | 'directory';
+}
+
+export interface FilesSessionView {
+  sessionId: string;
+  expiresAt: string;
+  maxDownloadBytes: number;
+}
+
+export interface FilesSharesResponse {
+  shares: FileShareView[];
+}
+
+export interface FilesEntriesResponse {
+  shareId: string;
+  entries: FileEntryView[];
+  nextCursor?: string | null;
+}

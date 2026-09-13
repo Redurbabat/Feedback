@@ -64,20 +64,27 @@ weiter Bytes zu liefern. Ebenso beenden Widerruf des Geraets, Verlust der Agent-
 
 Nicht gegen ein echtes Geraet getestet - nur gegen einen Fake-Agenten. Siehe Abschnitt 5.
 
-### 2.3 Control Web: gar nicht begonnen
+### 2.3 Control Web: erledigt
 
-- Geraete-Tab "Dateien" mit freigegebenen Bereichen
-- Liste mit Name, Typ, Groesse, Datum, Navigation in Unterordner, Paging ueber `nextCursor`
-- Download mit Fortschritt und Abbrechen
-- ausdruecklich **keine** Aktionen zum Loeschen, Umbenennen oder Ausfuehren
+- Bereich "Dateien" auf der Geraeteseite, mit den freigegebenen Bereichen
+- Liste mit Name, Typ, Groesse und Datum, Navigation in Unterordner ueber eine Brotkrumenleiste,
+  Paging ueber `nextCursor`
+- Download mit Fortschrittsanzeige und Abbrechen (`AbortController`)
+- keine Aktionen zum Loeschen, Umbenennen oder Ausfuehren - es gibt dafuer nicht einmal einen
+  Protokollbefehl, und die Oberflaeche sagt das ausdruecklich
+- die Berechtigungskarte bietet jetzt `files.read` an. Vorher liess sich die Capability
+  serverseitig gar nicht freigeben, der Tab haette also nie funktionieren koennen.
+
+Ordner werden vor Dateien und danach natuerlich sortiert: das Geraet antwortet in der Reihenfolge
+seines Dokumentenanbieters, die weder sortiert noch garantiert stabil ist.
 
 ### 2.4 Definition of Done fuer Files
 
 Benutzer waehlt lokal einen Bereich, Server- **und** lokale Freigabe erforderlich, keine nicht
 freigegebenen Bereiche sichtbar, Listing, Download, Streaming grosser Dateien, Cancellation,
-Limits, Widerruf stoppt den Zugriff: alles davon ist auf Geraet und Server implementiert und
-getestet. Offen bleibt die Bedienoberflaeche im Control Center - und damit ein Durchlauf, bei
-dem ein Mensch die Kette tatsaechlich benutzt.
+Limits, Widerruf stoppt den Zugriff: alles davon ist auf Geraet, Server und im Control Center
+implementiert und getestet. Offen bleibt der Durchlauf, bei dem ein Mensch die Kette an echter
+Hardware tatsaechlich benutzt.
 
 ## 3. Spaetere Milestones - nicht begonnen
 
@@ -117,6 +124,11 @@ die nur im selben Netz funktioniert, zaehlt nicht als implementiert.
   Tests lokal ueber einen eigenen Kotlin-Harness. Dessen Dateiliste wird von Hand gepflegt - ein
   vergessener Test faellt erst in CI auf, wie beim Umstellen von `files.read` auf implementiert
   geschehen. Die Android-CI bleibt die verbindliche Pruefung.
+- **Ein Download liegt vollstaendig im Browserspeicher.** Die Antwort wird gestreamt gelesen,
+  damit Fortschritt und Abbruch funktionieren, am Ende aber als Blob zusammengesetzt. Ohne die
+  File System Access API kann der Browser nicht auf die Platte streamen. Bei 256 MB - dem
+  Protokollmaximum - ist das spuerbar. `FEEDBACK_FILE_MAX_DOWNLOAD_BYTES` ist deshalb auch eine
+  Schutzgrenze fuer die Bedienoberflaeche, nicht nur fuer den Server.
 - **Kein Integrationstest ueber die drei Implementierungen hinweg.** Android, Server und Control
   Web werden je fuer sich getestet; dass die kanonischen Payloads und Feldnamen wirklich
   zusammenpassen, prueft bisher nur ein Mensch.
@@ -152,10 +164,11 @@ Diese sind bewusst so und in `docs/security/SECURITY_MODEL.md` ausfuehrlich bena
 
 ## 7. Naechster konkreter Schritt
 
-Der Dateien-Tab im Control Center aus Abschnitt 2.3. Geraet und Server sind fertig: der Weg von
-einem freigegebenen Ordner bis zu einer heruntergeladenen Datei ist durchgehend implementiert und
-gegen einen Fake-Agenten getestet. Es fehlt die Oberflaeche, die ihn benutzt.
+Ein erster Durchlauf gegen ein echtes Geraet nach `docs/deployment/BETRIEB.md`.
 
-Danach - und das ist der wichtigere Schritt - ein erster Durchlauf gegen ein echtes Geraet nach
-`docs/deployment/BETRIEB.md`. Bisher wurde jede Schicht fuer sich geprueft; dass die Kette als
-Ganzes traegt, hat noch niemand gesehen.
+Milestone 3 ist damit auf allen drei Seiten implementiert und je fuer sich getestet. Was fehlt,
+ist keine weitere Schicht, sondern der Beweis, dass sie zusammen tragen: ein Handy, ein
+erreichbarer Server, ein Browser, ein Ordner, eine Datei. Alles davor bleibt eine begruendete
+Annahme.
+
+Erst danach Milestone 4 (Media). Die Reihenfolge aus Abschnitt 3 gilt unveraendert.
