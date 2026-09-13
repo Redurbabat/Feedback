@@ -105,6 +105,78 @@ Liegt das Control Center aus gutem Grund auf einer anderen Origin, wird es mit
 `VITE_FEEDBACK_API_BASE_URL=https://<api-host>` gebaut, und diese Origin muss in
 `FEEDBACK_ALLOWED_ORIGINS` stehen.
 
+### 3.1.1 Feste Adresse: benannter Tunnel
+
+Der Schnelltunnel bekommt bei jedem Start einen neuen Hostnamen. Weil die Registrierung auf dem
+Geraet die Server-Adresse mitspeichert, heisst das: **jedes gekoppelte Geraet muss danach neu
+gekoppelt werden.** Bei einem Testgeraet ist das laestig, bei mehreren ist es der Grund
+aufzuhoeren.
+
+Ein benannter Tunnel loest das. Er braucht ein Cloudflare-Konto und eine **eigene Domain** dort -
+fuer die zufaelligen `*.trycloudflare.com`-Namen gibt es bauartbedingt keinen festen Ersatz.
+
+```bash
+cloudflared tunnel login                       # oeffnet den Browser, waehlt die Domain
+cloudflared tunnel create feedback             # nennt eine UUID und schreibt die Credentials
+cloudflared tunnel route dns feedback feedback.<deine-domain>
+```
+
+`~/.cloudflared/config.yml`:
+
+```yaml
+tunnel: <UUID aus dem create-Befehl>
+credentials-file: /home/<user>/.cloudflared/<UUID>.json
+
+ingress:
+  - hostname: feedback.<deine-domain>
+    service: http://127.0.0.1:8080
+  - service: http_status:404
+```
+
+```bash
+cloudflared tunnel run feedback                # zum Testen im Vordergrund
+sudo cloudflared service install                # danach als Dienst, startet mit dem System
+```
+
+Dann einmal einrichten und fertig:
+
+```bash
+tools/first-run.sh https://feedback.<deine-domain>
+cd server && npm start
+```
+
+**Warum die App das aushaelt.** Cloudflare trennt untaetige Verbindungen nach rund 100 Sekunden.
+Der SSE-Bildstrom sendet alle `SSE_KEEPALIVE_INTERVAL_MS` (15 s) einen Kommentar, der Agent alle
+`HEARTBEAT_INTERVAL_MS` (30 s) einen Heartbeat - beides liegt darunter. `Cache-Control:
+no-transform` und `X-Accel-Buffering: no` verhindern, dass ein Proxy den Bildstrom puffert.
+WebSockets laufen ueber Cloudflare-Tunnel ohne Zusatzkonfiguration.
+
+**`FEEDBACK_TRUST_PROXY=true` ist hier vertretbar** - aber nur, weil der Server an `127.0.0.1`
+lauscht und damit ausschliesslich ueber cloudflared erreichbar ist. Ohne den Schalter kommen alle
+Anfragen scheinbar von `127.0.0.1`, und das Rate Limit pro IP wird zu einem gemeinsamen Limit.
+Lauscht der Server auf einer oeffentlichen Adresse, gehoert der Schalter wieder aus: dann koennte
+jeder den Header faelschen.
+
+### 3.1.2 Ohne eigene Domain
+
+Wer keine Domain kaufen will, bekommt einen festen Hostnamen auch bei einem kleinen
+Node-Hoster - dort laeuft dann aber der Server selbst, nicht nur der Tunnel. Zu pruefen sind drei
+Dinge, sonst passt es nicht zu diesem Server:
+
+- **Kein Schlafmodus.** Ein Dienst, der bei Untaetigkeit einschlaeft, trennt die Agent-Verbindung;
+  das Geraet gilt dann als offline. Kostenlose Stufen tun das haeufig.
+- **Dauerhafter Datentraeger.** Die SQLite-Datei muss einen Neustart ueberleben.
+- **Ein Prozess.** Presence, Rate Limits und laufende Uebertragungen liegen im Arbeitsspeicher
+  (`OPEN_WORK.md` Abschnitt 4); zwei Instanzen kennen einander nicht.
+
+Der Unterschied ist nicht nur technisch: liegt der Server bei einem Anbieter, sieht dessen
+Betreiber im Prinzip, was Bedrohung 4.15 beschreibt. Zu Hause hinter einem Tunnel bleibt es bei
+Ihnen.
+
+**Nicht geeignet: Cloudflare Workers.** Kein Dateisystem fuer SQLite, keine nativen Module, kein
+langlebiger Prozess fuer Presence und laufende Uebertragungen, und `ws` laeuft dort nicht. Das
+waere ein Umbau auf Durable Objects, keine Deployment-Einstellung.
+
 ### 3.2 Dauerhafter Weg: eigener Host
 
 Gleiche Schritte, aber mit einem echten Hostnamen, einem Zertifikat (z. B. Let's Encrypt) und
