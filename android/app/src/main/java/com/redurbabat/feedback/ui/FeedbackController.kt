@@ -16,6 +16,9 @@ import com.redurbabat.feedback.pairing.ServerPairingSession
 import com.redurbabat.feedback.pairing.ServerPairingStatus
 import com.redurbabat.feedback.permissions.LocalCapabilityStore
 import com.redurbabat.feedback.protocol.Capability
+import com.redurbabat.feedback.security.AppLockPolicy
+import com.redurbabat.feedback.security.AppLockStore
+import com.redurbabat.feedback.security.AppUnlockResult
 import com.redurbabat.feedback.security.DeviceIdentity
 import com.redurbabat.feedback.security.DeviceIdentityStore
 import com.redurbabat.feedback.security.DeviceRegistrationStore
@@ -32,6 +35,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 sealed interface PairingUiPhase {
     data object Idle : PairingUiPhase
@@ -59,6 +63,11 @@ data class FeedbackUiState(
     val agentState: AgentConnectionState = AgentConnectionState.STOPPED,
     val backgroundConnectionEnabled: Boolean = false,
     val systemInfoGrantedLocally: Boolean = false,
+    val appLockConfigured: Boolean = false,
+    val appUnlocked: Boolean = false,
+    val appLockBusy: Boolean = false,
+    val appLockoutUntilEpochMillis: Long? = null,
+    val appLockError: String? = null,
     val globalMessage: String? = null,
 )
 
@@ -69,6 +78,9 @@ data class FeedbackUiState(
  * through [DeviceRegistrationStore], which seals the complete registration with Android Keystore.
  * A persistent connection is opt-in and handed to [BackgroundAgentService], which is a visible
  * foreground service with an ongoing notification and user-accessible stop action.
+ *
+ * The management UI itself is fail-closed behind an app-specific PIN/passphrase. Its verifier is
+ * Keystore-sealed and failed attempts are persistently rate-limited.
  */
 class FeedbackController(context: Context) {
     private val applicationContext = context.applicationContext
@@ -76,6 +88,7 @@ class FeedbackController(context: Context) {
     private val identityStore = DeviceIdentityStore()
     private val secretStore = SecretStore(applicationContext)
     private val registrationStore = DeviceRegistrationStore(secretStore)
+    private val appLockStore = AppLockStore(applicationContext, secretStore)
     private val localCapabilityStore = LocalCapabilityStore(applicationContext)
     private val backgroundStore = BackgroundConnectionStore(applicationContext)
     private val metadata = AndroidDeviceMetadataProvider.current()
@@ -86,6 +99,7 @@ class FeedbackController(context: Context) {
 
     private var pairingJob: Job? = null
     private var agentStateJob: Job? = null
+    private var appLockJob: Job? = null
     private var agent: DeviceAgentClient? = null
     private val closed = AtomicBoolean(false)
 
@@ -93,7 +107,128 @@ class FeedbackController(context: Context) {
         initialize()
     }
 
+    fun configureAppLock(secret: String, confirmation: String) {
+        if (_state.value.appLockBusy || _state.value.appLockConfigured || closed.get()) {
+            return
+        }
+        if (secret != confirmation) {
+            _state.value = _state.value.copy(appLockError = "Die beiden Eingaben stimmen nicht überein.")
+            return
+        }
+        val secretChars = secret.toCharArray()
+        if (!AppLockPolicy.isAcceptableSecret(secretChars)) {
+            secretChars.fill('\u0000')
+            _state.value = _state.value.copy(
+                appLockError = "Verwende mindestens 6 Ziffern oder eine Passphrase mit mindestens 8 Zeichen.",
+            )
+            return
+        }
+
+        appLockJob?.cancel()
+        _state.value = _state.value.copy(appLockBusy = true, appLockError = null)
+        appLockJob = scope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.Default) {
+                    try {
+                        appLockStore.configure(secretChars)
+                    } finally {
+                        secretChars.fill('\u0000')
+                    }
+                }
+            }
+            _state.value = if (result.isSuccess) {
+                _state.value.copy(
+                    appLockConfigured = true,
+                    appUnlocked = true,
+                    appLockBusy = false,
+                    appLockoutUntilEpochMillis = null,
+                    appLockError = null,
+                    globalMessage = "App-Schutz eingerichtet.",
+                )
+            } else {
+                _state.value.copy(
+                    appLockBusy = false,
+                    appLockError = "Der lokale App-Schutz konnte nicht sicher gespeichert werden.",
+                )
+            }
+        }
+    }
+
+    fun unlockApp(secret: String) {
+        if (!_state.value.appLockConfigured || _state.value.appUnlocked || _state.value.appLockBusy || closed.get()) {
+            return
+        }
+        val secretChars = secret.toCharArray()
+        _state.value = _state.value.copy(appLockBusy = true, appLockError = null)
+        appLockJob?.cancel()
+        appLockJob = scope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.Default) {
+                    try {
+                        appLockStore.verify(secretChars, System.currentTimeMillis())
+                    } finally {
+                        secretChars.fill('\u0000')
+                    }
+                }
+            }
+            val unlock = result.getOrNull()
+            _state.value = when (unlock) {
+                AppUnlockResult.Success -> _state.value.copy(
+                    appUnlocked = true,
+                    appLockBusy = false,
+                    appLockoutUntilEpochMillis = null,
+                    appLockError = null,
+                )
+
+                AppUnlockResult.NotConfigured -> _state.value.copy(
+                    appLockConfigured = false,
+                    appUnlocked = false,
+                    appLockBusy = false,
+                    appLockoutUntilEpochMillis = null,
+                    appLockError = "Die App-Sperre muss neu eingerichtet werden.",
+                )
+
+                is AppUnlockResult.Invalid -> _state.value.copy(
+                    appUnlocked = false,
+                    appLockBusy = false,
+                    appLockoutUntilEpochMillis = unlock.lockoutUntilEpochMillis,
+                    appLockError = if (unlock.lockoutUntilEpochMillis == null) {
+                        "PIN oder Passphrase ist falsch."
+                    } else {
+                        "Zu viele Fehlversuche. Die App-Sperre ist vorübergehend blockiert."
+                    },
+                )
+
+                is AppUnlockResult.Locked -> _state.value.copy(
+                    appUnlocked = false,
+                    appLockBusy = false,
+                    appLockoutUntilEpochMillis = unlock.lockoutUntilEpochMillis,
+                    appLockError = "Zu viele Fehlversuche. Bitte später erneut versuchen.",
+                )
+
+                null -> _state.value.copy(
+                    appUnlocked = false,
+                    appLockBusy = false,
+                    appLockError = "Die lokale App-Sperre konnte nicht geprüft werden.",
+                )
+            }
+        }
+    }
+
+    fun lockApp() {
+        if (_state.value.appLockConfigured && _state.value.appUnlocked) {
+            _state.value = _state.value.copy(
+                appUnlocked = false,
+                appLockBusy = false,
+                appLockError = null,
+            )
+        }
+    }
+
     fun setServerUrl(value: String) {
+        if (!_state.value.appUnlocked) {
+            return
+        }
         if (_state.value.pairing is PairingUiPhase.Starting ||
             _state.value.pairing is PairingUiPhase.Waiting ||
             _state.value.pairing is PairingUiPhase.Claiming
@@ -112,7 +247,7 @@ class FeedbackController(context: Context) {
     }
 
     fun startPairing() {
-        if (closed.get() || !_state.value.identityAvailable || _state.value.paired) {
+        if (closed.get() || !_state.value.appUnlocked || !_state.value.identityAvailable || _state.value.paired) {
             return
         }
         pairingJob?.cancel()
@@ -158,6 +293,9 @@ class FeedbackController(context: Context) {
     }
 
     fun cancelPairing() {
+        if (!_state.value.appUnlocked) {
+            return
+        }
         pairingJob?.cancel()
         pairingJob = null
         if (!_state.value.paired) {
@@ -166,7 +304,7 @@ class FeedbackController(context: Context) {
     }
 
     fun setSystemInfoGranted(granted: Boolean) {
-        if (!_state.value.paired) {
+        if (!_state.value.appUnlocked || !_state.value.paired) {
             return
         }
         runCatching {
@@ -186,7 +324,7 @@ class FeedbackController(context: Context) {
     }
 
     fun setBackgroundConnectionEnabled(enabled: Boolean) {
-        if (!_state.value.paired || closed.get()) {
+        if (!_state.value.appUnlocked || !_state.value.paired || closed.get()) {
             return
         }
         if (enabled == _state.value.backgroundConnectionEnabled) {
@@ -235,6 +373,9 @@ class FeedbackController(context: Context) {
     }
 
     fun reportBackgroundNotificationPermissionDenied() {
+        if (!_state.value.appUnlocked) {
+            return
+        }
         _state.value = _state.value.copy(
             backgroundConnectionEnabled = false,
             globalMessage = "Für die sichtbare Hintergrundverbindung sind Benachrichtigungen erforderlich. Die Verbindung wurde nicht aktiviert.",
@@ -242,7 +383,7 @@ class FeedbackController(context: Context) {
     }
 
     fun reconnectAgent() {
-        if (!_state.value.paired || closed.get()) {
+        if (!_state.value.appUnlocked || !_state.value.paired || closed.get()) {
             return
         }
         if (_state.value.backgroundConnectionEnabled) {
@@ -257,6 +398,9 @@ class FeedbackController(context: Context) {
      * untouched; owners should use the Control Center revoke action when they want global revoke.
      */
     fun forgetLocalRegistration() {
+        if (!_state.value.appUnlocked) {
+            return
+        }
         pairingJob?.cancel()
         pairingJob = null
         agentStateJob?.cancel()
@@ -282,7 +426,9 @@ class FeedbackController(context: Context) {
     }
 
     fun clearMessage() {
-        _state.value = _state.value.copy(globalMessage = null)
+        if (_state.value.appUnlocked) {
+            _state.value = _state.value.copy(globalMessage = null)
+        }
     }
 
     fun close() {
@@ -291,6 +437,7 @@ class FeedbackController(context: Context) {
         }
         pairingJob?.cancel()
         agentStateJob?.cancel()
+        appLockJob?.cancel()
         agent?.stop()
         agent = null
         scope.cancel()
@@ -300,6 +447,8 @@ class FeedbackController(context: Context) {
         val identity = runCatching { identityStore.loadOrCreate() }.getOrNull()
         val stored = runCatching { registrationStore.load() }.getOrNull()
         val backgroundEnabled = stored != null && backgroundStore.isEnabled()
+        val appLockConfiguredResult = runCatching { appLockStore.isConfigured() }
+        val appLockConfigured = appLockConfiguredResult.getOrDefault(true)
         _state.value = FeedbackUiState(
             identity = identity,
             identityAvailable = identity != null,
@@ -311,6 +460,13 @@ class FeedbackController(context: Context) {
             pairedAt = stored?.registration?.pairedAt,
             backgroundConnectionEnabled = backgroundEnabled,
             systemInfoGrantedLocally = localCapabilityStore.granted().contains(Capability.SYSTEM_INFO),
+            appLockConfigured = appLockConfigured,
+            appUnlocked = false,
+            appLockError = if (appLockConfiguredResult.isFailure) {
+                "Die vorhandene App-Sperre konnte nicht sicher geladen werden. Die Oberfläche bleibt gesperrt."
+            } else {
+                null
+            },
             globalMessage = if (identity == null) {
                 "Die Geräteidentität konnte nicht aus dem Android Keystore geladen werden."
             } else {
