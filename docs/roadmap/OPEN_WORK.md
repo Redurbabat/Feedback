@@ -12,6 +12,7 @@ Regeln aus `FEEDBACK_CONSTITUTION.md` Punkt 11 gelten: "implementiert" heisst ec
 
 | Bereich | Stand |
 | --- | --- |
+| Dokumentation: Threat Model, drei ADRs, Pairing, Agent, Hintergrunddienst, Geraeteschluessel | vollstaendig |
 | App-Lock (Setup, Unlock, Rate Limit, Auto-Lock, Re-Auth, Deaktivieren) | fertig, CI gruen |
 | Biometrische Entsperrung (optional, Android 9+) | fertig, CI gruen |
 | QR-Code des Pairing-Tickets auf Android rendern | fertig, CI gruen |
@@ -93,7 +94,7 @@ Hardware tatsaechlich benutzt.
 | 4 Media (`media.photos.read`, `media.videos.read`, Photo Picker) | implementiert auf allen drei Seiten, nicht auf Hardware getestet |
 | 5 Screen View (`screen.view`, MediaProjection, MediaCodec, WebRTC **plus STUN/TURN**) | nicht begonnen |
 | 6 Remote Control (`screen.control`, AccessibilityService, Input-Protokoll) | nicht begonnen |
-| 7 Hardening (Threat Model, Fuzzing, Dependency Audit, Batterie-Review) | nicht begonnen |
+| 7 Hardening (Fuzzing, Dependency Audit, Batterie-Review) | Threat Model steht, Rest nicht begonnen |
 | 8 Windows-Agent | nicht begonnen |
 
 Die Reihenfolge bleibt zwingend: Files → Media → Screen View → Remote Control. Bildschirm- und
