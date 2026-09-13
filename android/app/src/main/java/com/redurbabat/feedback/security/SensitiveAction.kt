@@ -32,6 +32,14 @@ enum class SensitiveAction(
         confirmLabel = "Freigeben",
         alwaysRequiresSecret = false,
     ),
+    GRANT_FILES_READ(
+        title = "Dateizugriff freigeben",
+        description = "Das Control Center darf dann die Bereiche lesen und herunterladen, die du " +
+            "unten ausdrücklich freigibst - und nur diese. Es kann nichts ändern, löschen oder " +
+            "öffnen. Zur Bestätigung PIN oder Passphrase eingeben.",
+        confirmLabel = "Freigeben",
+        alwaysRequiresSecret = false,
+    ),
 }
 
 /**

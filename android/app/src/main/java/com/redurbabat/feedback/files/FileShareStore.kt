@@ -29,6 +29,18 @@ data class StoredFileShare(
     )
 }
 
+/**
+ * What the store currently holds: the areas Android still honours, and how many it no longer does.
+ *
+ * The unavailable ones are counted rather than returned. They must never reach a listing - the
+ * grant is gone - but dropping them silently would hide from the owner that something they shared
+ * stopped working.
+ */
+data class FileShareInventory(
+    val available: List<StoredFileShare>,
+    val unavailableCount: Int,
+)
+
 class FileShareException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /**
@@ -50,19 +62,91 @@ class FileShareStore(
     private val applicationContext = context.applicationContext
     private val contentResolver = applicationContext.contentResolver
 
+    fun shares(): List<StoredFileShare> = inventory().available
+
     @Synchronized
-    fun shares(): List<StoredFileShare> {
+    fun inventory(): FileShareInventory {
         val stored = try {
             secretStore.get(STORE_KEY)
         } catch (_: SecretStoreException) {
             // A blob that no longer authenticates is not trusted into a share list.
-            return emptyList()
-        } ?: return emptyList()
+            return EMPTY_INVENTORY
+        } ?: return EMPTY_INVENTORY
 
-        val parsed = parseOrNull(stored) ?: return emptyList()
+        val parsed = parseOrNull(stored) ?: return EMPTY_INVENTORY
         // Android may have dropped a grant behind our back, for example after the owner revoked it
         // in system settings or the volume disappeared. Such a share is not reported as available.
-        return parsed.filter(::hasPersistedPermission)
+        val available = parsed.filter(::hasPersistedPermission)
+        return FileShareInventory(
+            available = available,
+            unavailableCount = parsed.size - available.size,
+        )
+    }
+
+    /**
+     * Drops the records Android no longer honours. Nothing readable is removed: only entries that
+     * already fail [hasPersistedPermission], which can never be listed or opened anyway.
+     */
+    @Synchronized
+    fun forgetUnavailable(): Int {
+        val stored = try {
+            secretStore.get(STORE_KEY)
+        } catch (_: SecretStoreException) {
+            return 0
+        } ?: return 0
+        val parsed = parseOrNull(stored) ?: return 0
+        val available = parsed.filter(::hasPersistedPermission)
+        val removed = parsed.size - available.size
+        if (removed > 0) {
+            persist(available)
+        }
+        return removed
+    }
+
+    /**
+     * Reads the display name Android reports for a freshly picked area.
+     *
+     * Returns null when the provider gives no name or one the protocol refuses - a name carrying a
+     * path separator, for instance. Such a pick is rejected rather than repaired, for the same
+     * reason a listing skips such a row.
+     */
+    fun resolveDisplayName(uri: Uri, kind: FileShareKind): String? {
+        val documentUri = try {
+            when (kind) {
+                FileShareKind.TREE -> DocumentsContract.buildDocumentUriUsingTree(
+                    uri,
+                    DocumentsContract.getTreeDocumentId(uri),
+                )
+                FileShareKind.FILE -> uri
+            }
+        } catch (_: IllegalArgumentException) {
+            return null
+        }
+
+        val cursor = try {
+            contentResolver.query(
+                documentUri,
+                arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+                null,
+                null,
+                null,
+            )
+        } catch (_: SecurityException) {
+            null
+        } catch (_: IllegalArgumentException) {
+            null
+        } ?: return null
+
+        val name = cursor.use { row ->
+            if (!row.moveToFirst()) {
+                null
+            } else {
+                val index = row.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                if (index < 0 || row.isNull(index)) null else row.getString(index)
+            }
+        } ?: return null
+
+        return name.takeIf(FileNames::isAcceptableDisplayName)
     }
 
     /**
@@ -235,5 +319,7 @@ class FileShareStore(
          * FILE_MAX_LIST_ENTRIES.
          */
         const val MAX_SHARES = 32
+
+        private val EMPTY_INVENTORY = FileShareInventory(available = emptyList(), unavailableCount = 0)
     }
 }

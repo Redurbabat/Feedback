@@ -1,12 +1,17 @@
 package com.redurbabat.feedback.ui
 
 import android.content.Context
+import android.net.Uri
 import android.os.SystemClock
 import com.redurbabat.feedback.agent.AgentConnectionState
 import com.redurbabat.feedback.agent.BackgroundAgentService
 import com.redurbabat.feedback.agent.BackgroundConnectionStore
 import com.redurbabat.feedback.agent.DeviceAgentClient
 import com.redurbabat.feedback.device.SystemInfoProvider
+import com.redurbabat.feedback.files.FileShare
+import com.redurbabat.feedback.files.FileShareException
+import com.redurbabat.feedback.files.FileShareKind
+import com.redurbabat.feedback.files.FileShareStore
 import com.redurbabat.feedback.files.FilesAgentFactory
 import com.redurbabat.feedback.network.FeedbackHttpException
 import com.redurbabat.feedback.network.OkHttpJsonTransport
@@ -76,6 +81,12 @@ data class FeedbackUiState(
     val agentState: AgentConnectionState = AgentConnectionState.STOPPED,
     val backgroundConnectionEnabled: Boolean = false,
     val systemInfoGrantedLocally: Boolean = false,
+    val filesReadGrantedLocally: Boolean = false,
+    /** Wire form only: the local content URI of a share never enters UI state. */
+    val fileShares: List<FileShare> = emptyList(),
+    /** Areas Android no longer honours. Counted so the owner sees that a share stopped working. */
+    val fileSharesUnavailable: Int = 0,
+    val fileShareBusy: Boolean = false,
     val appLockConfigured: Boolean = false,
     val appUnlocked: Boolean = false,
     val appLockBusy: Boolean = false,
@@ -116,6 +127,7 @@ class FeedbackController(
     private val registrationStore = DeviceRegistrationStore(secretStore)
     private val appLockStore = AppLockStore(applicationContext, secretStore)
     private val localCapabilityStore = LocalCapabilityStore(applicationContext)
+    private val fileShareStore = FileShareStore(applicationContext, secretStore)
     private val backgroundStore = BackgroundConnectionStore(applicationContext)
     private val metadata = AndroidDeviceMetadataProvider.current()
     private val systemInfoProvider = SystemInfoProvider(applicationContext)
@@ -386,6 +398,9 @@ class FeedbackController(
         )
         if (shouldLock) {
             lockApp()
+        } else {
+            // The owner may have withdrawn a document grant in Android settings while we were away.
+            refreshFileShares()
         }
     }
 
@@ -512,6 +527,7 @@ class FeedbackController(
 
             SensitiveAction.FORGET_REGISTRATION -> forgetLocalRegistrationConfirmed()
             SensitiveAction.GRANT_SYSTEM_INFO -> applySystemInfoGrant(true)
+            SensitiveAction.GRANT_FILES_READ -> applyFilesReadGrant(true)
         }
     }
 
@@ -703,15 +719,158 @@ class FeedbackController(
             localCapabilityStore.setGranted(Capability.SYSTEM_INFO, granted)
         }.onSuccess {
             _state.value = _state.value.copy(systemInfoGrantedLocally = granted)
-            if (_state.value.backgroundConnectionEnabled) {
-                BackgroundAgentService.notifyCapabilitiesChanged()
-            } else {
-                agent?.notifyCapabilitiesChanged()
-            }
+            notifyAgentCapabilitiesChanged()
         }.onFailure {
             _state.value = _state.value.copy(
                 globalMessage = "Die lokale Freigabe konnte nicht gespeichert werden.",
             )
+        }
+    }
+
+    // --------------------------------------------------------- files.read
+
+    /**
+     * The local half of `files.read`. Granting is gated behind the app-lock secret; withdrawing is
+     * not, for the same reason as every other capability here.
+     *
+     * The switch says nothing about what is readable. Without a shared area the capability resolves
+     * to an empty listing, which is why the UI shows both next to each other.
+     */
+    fun setFilesReadGranted(granted: Boolean) {
+        if (!_state.value.appUnlocked || !_state.value.paired) {
+            return
+        }
+        if (granted) {
+            requestSensitiveAction(SensitiveAction.GRANT_FILES_READ)
+        } else {
+            applyFilesReadGrant(false)
+        }
+    }
+
+    private fun applyFilesReadGrant(granted: Boolean) {
+        if (!_state.value.appUnlocked || !_state.value.paired) {
+            return
+        }
+        runCatching {
+            localCapabilityStore.setGranted(Capability.FILES_READ, granted)
+        }.onSuccess {
+            _state.value = _state.value.copy(filesReadGrantedLocally = granted)
+            notifyAgentCapabilitiesChanged()
+        }.onFailure {
+            _state.value = _state.value.copy(
+                globalMessage = "Die lokale Freigabe konnte nicht gespeichert werden.",
+            )
+        }
+    }
+
+    /**
+     * Records an area the owner just picked in Android's own document picker.
+     *
+     * The URI arrives from the system picker, so the consent already happened outside this app.
+     * What still has to hold here is that Android hands over a persistable read grant and a name
+     * the protocol accepts - otherwise the pick is refused rather than repaired.
+     */
+    fun addFileShare(uri: Uri, kind: FileShareKind) {
+        val current = _state.value
+        if (!current.appUnlocked || !current.paired || current.fileShareBusy || closed.get()) {
+            return
+        }
+        if (current.fileShares.size >= FileShareStore.MAX_SHARES) {
+            _state.value = current.copy(
+                globalMessage = "Es sind höchstens ${FileShareStore.MAX_SHARES} freigegebene " +
+                    "Bereiche möglich. Entferne zuerst einen davon.",
+            )
+            return
+        }
+
+        _state.value = current.copy(fileShareBusy = true, globalMessage = null)
+        scope.launch {
+            val outcome = withContext(Dispatchers.Default) {
+                runCatching {
+                    val name = fileShareStore.resolveDisplayName(uri, kind)
+                        ?: throw FileShareException("Android reported no usable display name")
+                    fileShareStore.add(uri, kind, name, System.currentTimeMillis())
+                    name
+                }
+            }
+            val message = outcome.fold(
+                onSuccess = { name -> "\"$name\" ist jetzt freigegeben." },
+                onFailure = {
+                    "Der Bereich konnte nicht freigegeben werden. Android hat keinen dauerhaften " +
+                        "Lesezugriff oder keinen verwendbaren Namen geliefert."
+                },
+            )
+            reloadFileShares(message)
+        }
+    }
+
+    /** Withdraws one area and releases the Android permission that went with it. */
+    fun removeFileShare(shareId: String) {
+        val current = _state.value
+        if (!current.appUnlocked || current.fileShareBusy || closed.get()) {
+            return
+        }
+        val name = current.fileShares.firstOrNull { it.shareId == shareId }?.displayName
+        _state.value = current.copy(fileShareBusy = true, globalMessage = null)
+        scope.launch {
+            withContext(Dispatchers.Default) {
+                runCatching { fileShareStore.remove(shareId) }
+            }
+            reloadFileShares(
+                if (name == null) {
+                    "Freigabe entfernt."
+                } else {
+                    "\"$name\" ist nicht mehr freigegeben."
+                },
+            )
+        }
+    }
+
+    /** Drops records for grants Android already withdrew. Nothing readable is removed. */
+    fun forgetUnavailableFileShares() {
+        val current = _state.value
+        if (!current.appUnlocked || current.fileShareBusy || closed.get()) {
+            return
+        }
+        _state.value = current.copy(fileShareBusy = true, globalMessage = null)
+        scope.launch {
+            val removed = withContext(Dispatchers.Default) {
+                runCatching { fileShareStore.forgetUnavailable() }.getOrDefault(0)
+            }
+            reloadFileShares(
+                if (removed <= 0) null else "Nicht mehr erreichbare Freigaben entfernt.",
+            )
+        }
+    }
+
+    /** Re-reads the inventory, so a grant revoked in Android settings shows up here. */
+    fun refreshFileShares() {
+        if (!_state.value.paired || _state.value.fileShareBusy || closed.get()) {
+            return
+        }
+        scope.launch { reloadFileShares(null) }
+    }
+
+    private suspend fun reloadFileShares(message: String?) {
+        val inventory = withContext(Dispatchers.Default) {
+            runCatching { fileShareStore.inventory() }.getOrNull()
+        }
+        if (closed.get()) {
+            return
+        }
+        _state.value = _state.value.copy(
+            fileShares = inventory?.available.orEmpty().map { it.toWire() },
+            fileSharesUnavailable = inventory?.unavailableCount ?: 0,
+            fileShareBusy = false,
+            globalMessage = message ?: _state.value.globalMessage,
+        )
+    }
+
+    private fun notifyAgentCapabilitiesChanged() {
+        if (_state.value.backgroundConnectionEnabled) {
+            BackgroundAgentService.notifyCapabilitiesChanged()
+        } else {
+            agent?.notifyCapabilitiesChanged()
         }
     }
 
@@ -807,6 +966,9 @@ class FeedbackController(
         agent = null
         registrationStore.clear()
         localCapabilityStore.clear()
+        // Consent does not survive the pairing it was given for. Re-pairing starts from nothing
+        // shared, rather than silently reviving areas the owner picked for an older registration.
+        runCatching { fileShareStore.clear() }
         _state.value = _state.value.copy(
             pairing = PairingUiPhase.Idle,
             paired = false,
@@ -817,7 +979,11 @@ class FeedbackController(
             agentState = AgentConnectionState.STOPPED,
             backgroundConnectionEnabled = false,
             systemInfoGrantedLocally = false,
-            globalMessage = "Lokale Kopplung entfernt. Für einen globalen Widerruf das Control Center verwenden.",
+            filesReadGrantedLocally = false,
+            fileShares = emptyList(),
+            fileSharesUnavailable = 0,
+            globalMessage = "Lokale Kopplung entfernt und alle Dateifreigaben aufgehoben. " +
+                "Für einen globalen Widerruf das Control Center verwenden.",
         )
     }
 
@@ -861,6 +1027,7 @@ class FeedbackController(
             pairedAt = stored?.registration?.pairedAt,
             backgroundConnectionEnabled = backgroundEnabled,
             systemInfoGrantedLocally = localCapabilityStore.granted().contains(Capability.SYSTEM_INFO),
+            filesReadGrantedLocally = localCapabilityStore.granted().contains(Capability.FILES_READ),
             appLockConfigured = appLockConfigured,
             // An unlocked session is process local and is never restored after a restart.
             appUnlocked = AutoLockPolicy.shouldLockOnStart(appLockConfigured).not(),
@@ -900,6 +1067,7 @@ class FeedbackController(
             } else {
                 startAgent(stored)
             }
+            refreshFileShares()
         }
     }
 

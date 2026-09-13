@@ -1,7 +1,10 @@
 package com.redurbabat.feedback.ui
 
 import android.Manifest
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -49,6 +52,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.redurbabat.feedback.agent.AgentConnectionState
+import com.redurbabat.feedback.files.FileShare
+import com.redurbabat.feedback.files.FileShareKind
+import com.redurbabat.feedback.files.FileSharePresentation
 import com.redurbabat.feedback.security.AutoLockTimeout
 import com.redurbabat.feedback.security.SensitiveAction
 import com.redurbabat.feedback.security.DeviceIdentity
@@ -67,6 +73,25 @@ fun FeedbackApp(
             controller.setBackgroundConnectionEnabled(true)
         } else {
             controller.reportBackgroundNotificationPermissionDenied()
+        }
+    }
+
+    // The document pickers are Android's own consent surface: this app never enumerates storage,
+    // it only receives what the owner handed over there. Both contracts add
+    // FLAG_GRANT_PERSISTABLE_URI_PERMISSION so the grant survives a restart and can be taken
+    // persistently - and released again when the owner withdraws the share.
+    val folderPickerLauncher = rememberLauncherForActivityResult(
+        contract = PersistableOpenDocumentTree(),
+    ) { uri ->
+        if (uri != null) {
+            controller.addFileShare(uri, FileShareKind.TREE)
+        }
+    }
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = PersistableOpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            controller.addFileShare(uri, FileShareKind.FILE)
         }
     }
 
@@ -113,6 +138,11 @@ fun FeedbackApp(
                     onStartPairing = controller::startPairing,
                     onCancelPairing = controller::cancelPairing,
                     onSystemInfoChanged = controller::setSystemInfoGranted,
+                    onFilesReadChanged = controller::setFilesReadGranted,
+                    onPickFolderShare = { folderPickerLauncher.launch(null) },
+                    onPickFileShare = { filePickerLauncher.launch(arrayOf("*/*")) },
+                    onRemoveFileShare = controller::removeFileShare,
+                    onForgetUnavailableFileShares = controller::forgetUnavailableFileShares,
                     onBackgroundConnectionChanged = onBackgroundConnectionChanged,
                     onReconnect = controller::reconnectAgent,
                     onForgetLocalRegistration = controller::forgetLocalRegistration,
@@ -146,6 +176,11 @@ private fun HomeScreen(
     onStartPairing: () -> Unit,
     onCancelPairing: () -> Unit,
     onSystemInfoChanged: (Boolean) -> Unit,
+    onFilesReadChanged: (Boolean) -> Unit,
+    onPickFolderShare: () -> Unit,
+    onPickFileShare: () -> Unit,
+    onRemoveFileShare: (String) -> Unit,
+    onForgetUnavailableFileShares: () -> Unit,
     onBackgroundConnectionChanged: (Boolean) -> Unit,
     onReconnect: () -> Unit,
     onForgetLocalRegistration: () -> Unit,
@@ -203,6 +238,19 @@ private fun HomeScreen(
             CapabilityCard(
                 systemInfoGranted = state.systemInfoGrantedLocally,
                 onSystemInfoChanged = onSystemInfoChanged,
+                filesReadGranted = state.filesReadGrantedLocally,
+                onFilesReadChanged = onFilesReadChanged,
+                sharedAreaCount = state.fileShares.size,
+            )
+            FileShareCard(
+                shares = state.fileShares,
+                unavailableCount = state.fileSharesUnavailable,
+                busy = state.fileShareBusy,
+                filesReadGranted = state.filesReadGrantedLocally,
+                onPickFolderShare = onPickFolderShare,
+                onPickFileShare = onPickFileShare,
+                onRemoveFileShare = onRemoveFileShare,
+                onForgetUnavailableFileShares = onForgetUnavailableFileShares,
             )
             AppLockCard(
                 state = state,
@@ -498,10 +546,33 @@ private fun BackgroundConnectionCard(
     }
 }
 
+/**
+ * Document pickers that ask for a persistable grant.
+ *
+ * The AndroidX contracts request read access for the current process only. Feedback needs the
+ * grant to survive a restart, because a shared area is meant to stay shared until the owner
+ * withdraws it - and a grant that cannot be taken persistently also cannot be released again.
+ */
+private class PersistableOpenDocumentTree : ActivityResultContracts.OpenDocumentTree() {
+    override fun createIntent(context: Context, input: Uri?): Intent =
+        super.createIntent(context, input).addFlags(PERSISTABLE_READ_FLAGS)
+}
+
+private class PersistableOpenDocument : ActivityResultContracts.OpenDocument() {
+    override fun createIntent(context: Context, input: Array<String>): Intent =
+        super.createIntent(context, input).addFlags(PERSISTABLE_READ_FLAGS)
+}
+
+private const val PERSISTABLE_READ_FLAGS =
+    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+
 @Composable
 private fun CapabilityCard(
     systemInfoGranted: Boolean,
     onSystemInfoChanged: (Boolean) -> Unit,
+    filesReadGranted: Boolean,
+    onFilesReadChanged: (Boolean) -> Unit,
+    sharedAreaCount: Int,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -522,25 +593,168 @@ private fun CapabilityCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             HorizontalDivider()
+            CapabilityRow(
+                title = "Systeminformationen",
+                description = "Modell, Android-Version, Akku, Speicher und Netzwerktyp. Keine IMEI, MAC-Adresse oder Telefonnummer.",
+                checked = systemInfoGranted,
+                onCheckedChange = onSystemInfoChanged,
+            )
+            HorizontalDivider()
+            CapabilityRow(
+                title = "Dateizugriff",
+                description = "Nur lesen, und nur in den Bereichen, die du unten freigibst. " +
+                    FileSharePresentation.shareSummary(sharedAreaCount),
+                checked = filesReadGranted,
+                onCheckedChange = onFilesReadChanged,
+            )
+        }
+    }
+}
+
+@Composable
+private fun CapabilityRow(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f).padding(end = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+        )
+    }
+}
+
+/**
+ * The areas the owner handed over, and the only place to add or withdraw one.
+ *
+ * Withdrawing is never gated: taking access away is always allowed to be the quick path.
+ */
+@Composable
+private fun FileShareCard(
+    shares: List<FileShare>,
+    unavailableCount: Int,
+    busy: Boolean,
+    filesReadGranted: Boolean,
+    onPickFolderShare: () -> Unit,
+    onPickFileShare: () -> Unit,
+    onRemoveFileShare: (String) -> Unit,
+    onForgetUnavailableFileShares: () -> Unit,
+) {
+    val now = System.currentTimeMillis()
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = "Freigegebene Bereiche",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = "Feedback sieht ausschließlich, was du hier über Androids eigenen Dateiauswahldialog übergibst. Es fordert keinen pauschalen Speicherzugriff an und kann nichts ändern, löschen oder öffnen.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            if (!filesReadGranted && shares.isNotEmpty()) {
+                Text(
+                    text = "Der Schalter „Dateizugriff“ ist aus. Diese Bereiche bleiben gespeichert, sind aber gerade nicht abrufbar.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            FileSharePresentation.unavailableNotice(unavailableCount)?.let { notice ->
+                HorizontalDivider()
+                Text(
+                    text = notice,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                TextButton(
+                    onClick = onForgetUnavailableFileShares,
+                    enabled = !busy,
+                ) {
+                    Text("Nicht erreichbare Einträge entfernen")
+                }
+            }
+
+            HorizontalDivider()
+
+            if (shares.isEmpty()) {
+                Text(
+                    text = "Noch nichts freigegeben.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            } else {
+                for (share in shares) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f).padding(end = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            Text(share.displayName, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                text = FileSharePresentation.kindLabel(share.kind) +
+                                    " · " +
+                                    FileSharePresentation.addedLabel(share.addedAtEpochMillis, now),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        TextButton(
+                            onClick = { onRemoveFileShare(share.shareId) },
+                            enabled = !busy,
+                        ) {
+                            Text("Entfernen")
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider()
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Column(
-                    modifier = Modifier.weight(1f).padding(end = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                OutlinedButton(
+                    onClick = onPickFolderShare,
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f),
                 ) {
-                    Text("Systeminformationen", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        text = "Modell, Android-Version, Akku, Speicher und Netzwerktyp. Keine IMEI, MAC-Adresse oder Telefonnummer.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Text("Ordner freigeben")
                 }
-                Switch(
-                    checked = systemInfoGranted,
-                    onCheckedChange = onSystemInfoChanged,
-                )
+                OutlinedButton(
+                    onClick = onPickFileShare,
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Datei freigeben")
+                }
             }
         }
     }
