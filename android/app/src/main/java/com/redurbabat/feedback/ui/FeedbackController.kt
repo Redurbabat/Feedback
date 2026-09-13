@@ -82,6 +82,8 @@ data class FeedbackUiState(
     val backgroundConnectionEnabled: Boolean = false,
     val systemInfoGrantedLocally: Boolean = false,
     val filesReadGrantedLocally: Boolean = false,
+    val mediaPhotosGrantedLocally: Boolean = false,
+    val mediaVideosGrantedLocally: Boolean = false,
     /** Wire form only: the local content URI of a share never enters UI state. */
     val fileShares: List<FileShare> = emptyList(),
     /** Areas Android no longer honours. Counted so the owner sees that a share stopped working. */
@@ -526,8 +528,14 @@ class FeedbackController(
             }
 
             SensitiveAction.FORGET_REGISTRATION -> forgetLocalRegistrationConfirmed()
-            SensitiveAction.GRANT_SYSTEM_INFO -> applySystemInfoGrant(true)
-            SensitiveAction.GRANT_FILES_READ -> applyFilesReadGrant(true)
+            SensitiveAction.GRANT_SYSTEM_INFO ->
+                applyCapabilityGrant(Capability.SYSTEM_INFO, true)
+            SensitiveAction.GRANT_FILES_READ ->
+                applyCapabilityGrant(Capability.FILES_READ, true)
+            SensitiveAction.GRANT_MEDIA_PHOTOS ->
+                applyCapabilityGrant(Capability.MEDIA_PHOTOS_READ, true)
+            SensitiveAction.GRANT_MEDIA_VIDEOS ->
+                applyCapabilityGrant(Capability.MEDIA_VIDEOS_READ, true)
         }
     }
 
@@ -700,61 +708,53 @@ class FeedbackController(
     }
 
     fun setSystemInfoGranted(granted: Boolean) {
-        if (!_state.value.appUnlocked || !_state.value.paired) {
-            return
-        }
-        if (granted) {
-            // Handing out a capability is gated; withdrawing one never is.
-            requestSensitiveAction(SensitiveAction.GRANT_SYSTEM_INFO)
-        } else {
-            applySystemInfoGrant(false)
-        }
+        setCapabilityGranted(Capability.SYSTEM_INFO, granted)
     }
 
-    private fun applySystemInfoGrant(granted: Boolean) {
-        if (!_state.value.appUnlocked || !_state.value.paired) {
-            return
-        }
-        runCatching {
-            localCapabilityStore.setGranted(Capability.SYSTEM_INFO, granted)
-        }.onSuccess {
-            _state.value = _state.value.copy(systemInfoGrantedLocally = granted)
-            notifyAgentCapabilitiesChanged()
-        }.onFailure {
-            _state.value = _state.value.copy(
-                globalMessage = "Die lokale Freigabe konnte nicht gespeichert werden.",
-            )
-        }
-    }
-
-    // --------------------------------------------------------- files.read
+    // ------------------------------------------------- local read capabilities
 
     /**
-     * The local half of `files.read`. Granting is gated behind the app-lock secret; withdrawing is
-     * not, for the same reason as every other capability here.
+     * The local half of a read capability.
      *
-     * The switch says nothing about what is readable. Without a shared area the capability resolves
-     * to an empty listing, which is why the UI shows both next to each other.
+     * Granting is gated behind the app-lock secret; withdrawing is not. One generic path rather
+     * than one method per capability: four near-copies would be four places to forget a check.
      */
-    fun setFilesReadGranted(granted: Boolean) {
+    fun setCapabilityGranted(capability: Capability, granted: Boolean) {
         if (!_state.value.appUnlocked || !_state.value.paired) {
             return
         }
         if (granted) {
-            requestSensitiveAction(SensitiveAction.GRANT_FILES_READ)
+            val action = grantActionFor(capability) ?: return
+            requestSensitiveAction(action)
         } else {
-            applyFilesReadGrant(false)
+            applyCapabilityGrant(capability, false)
         }
     }
 
-    private fun applyFilesReadGrant(granted: Boolean) {
+    private fun grantActionFor(capability: Capability): SensitiveAction? = when (capability) {
+        Capability.SYSTEM_INFO -> SensitiveAction.GRANT_SYSTEM_INFO
+        Capability.FILES_READ -> SensitiveAction.GRANT_FILES_READ
+        Capability.MEDIA_PHOTOS_READ -> SensitiveAction.GRANT_MEDIA_PHOTOS
+        Capability.MEDIA_VIDEOS_READ -> SensitiveAction.GRANT_MEDIA_VIDEOS
+        else -> null
+    }
+
+    private fun applyCapabilityGrant(capability: Capability, granted: Boolean) {
         if (!_state.value.appUnlocked || !_state.value.paired) {
             return
         }
         runCatching {
-            localCapabilityStore.setGranted(Capability.FILES_READ, granted)
+            localCapabilityStore.setGranted(capability, granted)
         }.onSuccess {
-            _state.value = _state.value.copy(filesReadGrantedLocally = granted)
+            _state.value = when (capability) {
+                Capability.SYSTEM_INFO -> _state.value.copy(systemInfoGrantedLocally = granted)
+                Capability.FILES_READ -> _state.value.copy(filesReadGrantedLocally = granted)
+                Capability.MEDIA_PHOTOS_READ ->
+                    _state.value.copy(mediaPhotosGrantedLocally = granted)
+                Capability.MEDIA_VIDEOS_READ ->
+                    _state.value.copy(mediaVideosGrantedLocally = granted)
+                else -> _state.value
+            }
             notifyAgentCapabilitiesChanged()
         }.onFailure {
             _state.value = _state.value.copy(
@@ -798,6 +798,59 @@ class FeedbackController(
                 onFailure = {
                     "Der Bereich konnte nicht freigegeben werden. Android hat keinen dauerhaften " +
                         "Lesezugriff oder keinen verwendbaren Namen geliefert."
+                },
+            )
+            reloadFileShares(message)
+        }
+    }
+
+    /**
+     * Records a photo-picker selection as one shared area.
+     *
+     * The picker is Android's own consent surface and needs no runtime permission: it hands over
+     * exactly what the owner selected. Photos and videos are separate selections because
+     * media.photos.read and media.videos.read are separate capabilities.
+     */
+    fun addMediaShare(uris: List<Uri>, capability: Capability) {
+        val current = _state.value
+        if (!current.appUnlocked || !current.paired || current.fileShareBusy || closed.get()) {
+            return
+        }
+        if (capability != Capability.MEDIA_PHOTOS_READ && capability != Capability.MEDIA_VIDEOS_READ) {
+            return
+        }
+        if (current.fileShares.size >= FileShareStore.MAX_SHARES) {
+            _state.value = current.copy(
+                globalMessage = "Es sind höchstens ${FileShareStore.MAX_SHARES} freigegebene " +
+                    "Bereiche möglich. Entferne zuerst einen davon.",
+            )
+            return
+        }
+
+        val label = if (capability == Capability.MEDIA_PHOTOS_READ) "Fotoauswahl" else "Videoauswahl"
+        val displayName = "$label (${uris.size})"
+
+        _state.value = current.copy(fileShareBusy = true, globalMessage = null)
+        scope.launch {
+            val outcome = withContext(Dispatchers.Default) {
+                runCatching {
+                    fileShareStore.addCollection(uris, capability, displayName, System.currentTimeMillis())
+                }
+            }
+            val message = outcome.fold(
+                onSuccess = { share ->
+                    if (share.persistent) {
+                        "\"$displayName\" ist jetzt freigegeben."
+                    } else {
+                        // Said plainly rather than hidden: the owner should know this one may not
+                        // survive a restart.
+                        "\"$displayName\" ist freigegeben. Android hat dafür keinen dauerhaften " +
+                            "Zugriff erteilt - nach einem Neustart der App kann die Auswahl " +
+                            "erneut nötig sein."
+                    }
+                },
+                onFailure = {
+                    "Die Auswahl konnte nicht freigegeben werden."
                 },
             )
             reloadFileShares(message)
@@ -980,6 +1033,8 @@ class FeedbackController(
             backgroundConnectionEnabled = false,
             systemInfoGrantedLocally = false,
             filesReadGrantedLocally = false,
+            mediaPhotosGrantedLocally = false,
+            mediaVideosGrantedLocally = false,
             fileShares = emptyList(),
             fileSharesUnavailable = 0,
             globalMessage = "Lokale Kopplung entfernt und alle Dateifreigaben aufgehoben. " +
@@ -1028,6 +1083,10 @@ class FeedbackController(
             backgroundConnectionEnabled = backgroundEnabled,
             systemInfoGrantedLocally = localCapabilityStore.granted().contains(Capability.SYSTEM_INFO),
             filesReadGrantedLocally = localCapabilityStore.granted().contains(Capability.FILES_READ),
+            mediaPhotosGrantedLocally =
+                localCapabilityStore.granted().contains(Capability.MEDIA_PHOTOS_READ),
+            mediaVideosGrantedLocally =
+                localCapabilityStore.granted().contains(Capability.MEDIA_VIDEOS_READ),
             appLockConfigured = appLockConfigured,
             // An unlocked session is process local and is never restored after a restart.
             appUnlocked = AutoLockPolicy.shouldLockOnStart(appLockConfigured).not(),

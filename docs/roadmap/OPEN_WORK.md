@@ -90,7 +90,7 @@ Hardware tatsaechlich benutzt.
 
 | Milestone | Stand |
 | --- | --- |
-| 4 Media (`media.photos.read`, `media.videos.read`, Photo Picker) | nicht begonnen |
+| 4 Media (`media.photos.read`, `media.videos.read`, Photo Picker) | Geraeteseite implementiert, Server und Control Web offen |
 | 5 Screen View (`screen.view`, MediaProjection, MediaCodec, WebRTC **plus STUN/TURN**) | nicht begonnen |
 | 6 Remote Control (`screen.control`, AccessibilityService, Input-Protokoll) | nicht begonnen |
 | 7 Hardening (Threat Model, Fuzzing, Dependency Audit, Batterie-Review) | nicht begonnen |
@@ -164,7 +164,14 @@ Diese sind bewusst so und in `docs/security/SECURITY_MODEL.md` ausfuehrlich bena
 
 ## 7. Naechster konkreter Schritt
 
-Ein erster Durchlauf gegen ein echtes Geraet nach `docs/deployment/BETRIEB.md`.
+Die Server- und Control-Web-Seite von Milestone 4. Die Geraeteseite steht: Fotos und Videos werden
+ueber Androids Fotoauswahl freigegeben, als Sammlung gefuehrt und ueber dieselbe Uebertragungs-
+strecke wie Dateien ausgeliefert. Der Server fuehrt die beiden Capabilities noch nicht als
+implementiert - das ist die gleiche bewusste Zwischenstufe wie bei `files.read` und im Validator
+deklariert.
+
+Unabhaengig davon weiter offen und wichtiger als jede weitere Schicht: ein erster Durchlauf gegen
+ein echtes Geraet nach `docs/deployment/BETRIEB.md`.
 
 Milestone 3 ist damit auf allen drei Seiten implementiert und je fuer sich getestet. Was fehlt,
 ist keine weitere Schicht, sondern der Beweis, dass sie zusammen tragen: ein Handy, ein

@@ -1,5 +1,6 @@
 package com.redurbabat.feedback.files
 
+import com.redurbabat.feedback.protocol.Capability
 import com.redurbabat.feedback.protocol.MessageType
 import com.redurbabat.feedback.protocol.ProtocolConstants
 import com.redurbabat.feedback.protocol.ProtocolError
@@ -15,6 +16,12 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+private val ALL_SHARE_CAPABILITIES = setOf(
+    Capability.FILES_READ,
+    Capability.MEDIA_PHOTOS_READ,
+    Capability.MEDIA_VIDEOS_READ,
+)
+
 class FilesRequestHandlerTest {
 
     private val shareId = "c2hhcmUx"
@@ -27,10 +34,10 @@ class FilesRequestHandlerTest {
     fun `shares are reported in wire form`() {
         val source = FakeFileSource(
             shares = listOf(
-                FileShare(shareId, "Documents", FileShareKind.TREE, 1_757_754_720_000L),
+                FileShare(shareId, "Documents", FileShareKind.TREE, Capability.FILES_READ, 1_757_754_720_000L),
             ),
         )
-        val outcome = FilesRequestHandler(source).handleSharesRequest()
+        val outcome = FilesRequestHandler(source).handleSharesRequest(ALL_SHARE_CAPABILITIES)
         val payload = replyPayload(outcome, MessageType.FILES_SHARES_RESPONSE)
         val shares = payload.getJSONArray("shares")
         assertEquals(1, shares.length())
@@ -44,6 +51,7 @@ class FilesRequestHandlerTest {
         val source = FakeFileSource(page = FileListPage(listOf(entry), nextCursor = null))
         val outcome = FilesRequestHandler(source).handleListRequest(
             JSONObject().put("shareId", shareId),
+            ALL_SHARE_CAPABILITIES,
         )
         val payload = replyPayload(outcome, MessageType.FILES_LIST_RESPONSE)
         assertEquals(shareId, payload.getString("shareId"))
@@ -57,6 +65,7 @@ class FilesRequestHandlerTest {
         val source = FakeFileSource(page = FileListPage(emptyList(), nextCursor = "Y3Vyc29y"))
         val outcome = FilesRequestHandler(source).handleListRequest(
             JSONObject().put("shareId", shareId).put("directoryId", directoryId),
+            ALL_SHARE_CAPABILITIES,
         )
         val payload = replyPayload(outcome, MessageType.FILES_LIST_RESPONSE)
         assertEquals(directoryId, source.lastDirectoryId)
@@ -68,19 +77,20 @@ class FilesRequestHandlerTest {
         val source = FakeFileSource()
         val handler = FilesRequestHandler(source)
 
-        assertFailure(handler.handleListRequest(JSONObject()), ProtocolError.INVALID_MESSAGE)
+        assertFailure(handler.handleListRequest(JSONObject(), ALL_SHARE_CAPABILITIES), ProtocolError.INVALID_MESSAGE)
         assertFailure(
-            handler.handleListRequest(JSONObject().put("shareId", "content://tree/primary")),
+            handler.handleListRequest(JSONObject().put("shareId", "content://tree/primary"), ALL_SHARE_CAPABILITIES),
             ProtocolError.INVALID_MESSAGE,
         )
         assertFailure(
             handler.handleListRequest(
                 JSONObject().put("shareId", shareId).put("directoryId", "../escape"),
-            ),
+            ALL_SHARE_CAPABILITIES,
+        ),
             ProtocolError.INVALID_MESSAGE,
         )
         assertFailure(
-            handler.handleListRequest(JSONObject().put("shareId", shareId).put("limit", 0)),
+            handler.handleListRequest(JSONObject().put("shareId", shareId).put("limit", 0), ALL_SHARE_CAPABILITIES),
             ProtocolError.INVALID_MESSAGE,
         )
         assertFalse("nothing should have been read", source.listCalled)
@@ -90,7 +100,7 @@ class FilesRequestHandlerTest {
     fun `an unknown share answers NOT_FOUND rather than FORBIDDEN`() {
         val handler = FilesRequestHandler(FakeFileSource(page = null))
         assertFailure(
-            handler.handleListRequest(JSONObject().put("shareId", shareId)),
+            handler.handleListRequest(JSONObject().put("shareId", shareId), ALL_SHARE_CAPABILITIES),
             ProtocolError.NOT_FOUND,
         )
     }
@@ -102,7 +112,8 @@ class FilesRequestHandlerTest {
         val payload = replyPayload(
             handler.handleMetadataRequest(
                 JSONObject().put("shareId", shareId).put("fileId", fileId),
-            ),
+            ALL_SHARE_CAPABILITIES,
+        ),
             MessageType.FILES_METADATA_RESPONSE,
         )
         assertEquals(entry.name, payload.getJSONObject("entry").getString("name"))
@@ -111,7 +122,8 @@ class FilesRequestHandlerTest {
         assertFailure(
             empty.handleMetadataRequest(
                 JSONObject().put("shareId", shareId).put("fileId", fileId),
-            ),
+            ALL_SHARE_CAPABILITIES,
+        ),
             ProtocolError.NOT_FOUND,
         )
     }
@@ -123,7 +135,7 @@ class FilesRequestHandlerTest {
         val content = ByteArray(200) { (it % 251).toByte() }
         val handler = handlerFor(content, size = content.size.toLong(), chunkSize = 64)
 
-        assertEquals(FilesOutcome.Accepted, handler.handleDownloadStart(startPayload()))
+        assertEquals(FilesOutcome.Accepted, handler.handleDownloadStart(startPayload(), ALL_SHARE_CAPABILITIES))
 
         val received = ArrayList<ByteArray>()
         var complete: JSONObject? = null
@@ -161,7 +173,7 @@ class FilesRequestHandlerTest {
     fun `backpressure stops the sender at the window until an ack arrives`() {
         val content = ByteArray(64 * 20)
         val handler = handlerFor(content, size = content.size.toLong(), chunkSize = 64)
-        handler.handleDownloadStart(startPayload())
+        handler.handleDownloadStart(startPayload(), ALL_SHARE_CAPABILITIES)
 
         val first = handler.drainReadyMessages()
         assertEquals(
@@ -188,7 +200,7 @@ class FilesRequestHandlerTest {
     fun `chunks arrive gapless and the last one is flagged`() {
         val content = ByteArray(150)
         val handler = handlerFor(content, size = content.size.toLong(), chunkSize = 64)
-        handler.handleDownloadStart(startPayload())
+        handler.handleDownloadStart(startPayload(), ALL_SHARE_CAPABILITIES)
 
         val sequence = FileChunkSequence()
         var guard = 0
@@ -218,7 +230,7 @@ class FilesRequestHandlerTest {
             content = ByteArray(5_000),
         )
         val handler = FilesRequestHandler(source, maxDownloadBytes = 1_000L)
-        assertFailure(handler.handleDownloadStart(startPayload()), ProtocolError.UNSUPPORTED)
+        assertFailure(handler.handleDownloadStart(startPayload(), ALL_SHARE_CAPABILITIES), ProtocolError.UNSUPPORTED)
         assertFalse("the file must not be opened", source.openCalled)
         assertEquals(0, handler.activeTransferCount)
     }
@@ -229,7 +241,7 @@ class FilesRequestHandlerTest {
             entry = FileEntry(fileId, "Belege", null, null, null, FileEntryKind.DIRECTORY),
         )
         val handler = FilesRequestHandler(source)
-        assertFailure(handler.handleDownloadStart(startPayload()), ProtocolError.NOT_FOUND)
+        assertFailure(handler.handleDownloadStart(startPayload(), ALL_SHARE_CAPABILITIES), ProtocolError.NOT_FOUND)
         assertFalse(source.openCalled)
     }
 
@@ -241,9 +253,9 @@ class FilesRequestHandlerTest {
             content = content,
         )
         val handler = FilesRequestHandler(source, maxConcurrentTransfers = 1, chunkSize = 64)
-        assertEquals(FilesOutcome.Accepted, handler.handleDownloadStart(startPayload("dHJhbnMx")))
+        assertEquals(FilesOutcome.Accepted, handler.handleDownloadStart(startPayload("dHJhbnMx"), ALL_SHARE_CAPABILITIES))
         assertFailure(
-            handler.handleDownloadStart(startPayload("dHJhbnMy")),
+            handler.handleDownloadStart(startPayload("dHJhbnMy"), ALL_SHARE_CAPABILITIES),
             ProtocolError.RATE_LIMITED,
         )
     }
@@ -252,15 +264,15 @@ class FilesRequestHandlerTest {
     fun `a duplicate transfer id is refused`() {
         val content = ByteArray(4_096)
         val handler = handlerFor(content, size = content.size.toLong(), chunkSize = 64)
-        handler.handleDownloadStart(startPayload())
-        assertFailure(handler.handleDownloadStart(startPayload()), ProtocolError.INVALID_MESSAGE)
+        handler.handleDownloadStart(startPayload(), ALL_SHARE_CAPABILITIES)
+        assertFailure(handler.handleDownloadStart(startPayload(), ALL_SHARE_CAPABILITIES), ProtocolError.INVALID_MESSAGE)
     }
 
     @Test
     fun `an ack for something never sent aborts the transfer`() {
         val content = ByteArray(4_096)
         val handler = handlerFor(content, size = content.size.toLong(), chunkSize = 64)
-        handler.handleDownloadStart(startPayload())
+        handler.handleDownloadStart(startPayload(), ALL_SHARE_CAPABILITIES)
         handler.drainReadyMessages()
 
         assertFailure(
@@ -291,7 +303,7 @@ class FilesRequestHandlerTest {
             content = content,
         )
         val handler = FilesRequestHandler(source, chunkSize = 64)
-        handler.handleDownloadStart(startPayload())
+        handler.handleDownloadStart(startPayload(), ALL_SHARE_CAPABILITIES)
         handler.drainReadyMessages()
 
         handler.handleCancel(JSONObject().put("transferId", TRANSFER_ID))
@@ -308,7 +320,7 @@ class FilesRequestHandlerTest {
             content = content,
         )
         val handler = FilesRequestHandler(source, chunkSize = 64)
-        handler.handleDownloadStart(startPayload())
+        handler.handleDownloadStart(startPayload(), ALL_SHARE_CAPABILITIES)
 
         val messages = handler.cancelAll(FileTransferCancelReason.CAPABILITY_REVOKED)
         assertEquals(1, messages.size)
@@ -367,6 +379,21 @@ class FilesRequestHandlerTest {
         var closed = false
 
         override fun shares(): List<FileShare> = shares
+
+        override fun findShare(shareId: String): FileShare? =
+            shares.firstOrNull { it.shareId == shareId } ?: defaultShare(shareId)
+
+        /**
+         * Most tests never declare a share; they exercise listing and download instead. Treating an
+         * unknown id as a files.read share keeps those tests about what they are about - the
+         * capability rules get their own tests below.
+         */
+        private fun defaultShare(shareId: String): FileShare? =
+            if (shares.isEmpty()) {
+                FileShare(shareId, "Test", FileShareKind.TREE, Capability.FILES_READ, 0L)
+            } else {
+                null
+            }
 
         override fun list(
             shareId: String,

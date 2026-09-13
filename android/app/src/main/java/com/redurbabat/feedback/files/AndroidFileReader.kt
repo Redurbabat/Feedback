@@ -4,6 +4,8 @@ import android.content.Context
 import android.database.Cursor
 import android.net.Uri
 import android.provider.DocumentsContract
+import android.provider.OpenableColumns
+import com.redurbabat.feedback.protocol.Capability
 import com.redurbabat.feedback.protocol.ProtocolConstants
 import java.io.FileNotFoundException
 import java.io.IOException
@@ -30,6 +32,8 @@ class AndroidFileReader(
     /** The areas the owner shared, in wire form. */
     override fun shares(): List<FileShare> = shareStore.shares().map(StoredFileShare::toWire)
 
+    override fun findShare(shareId: String): FileShare? = shareStore.find(shareId)?.toWire()
+
     /**
      * Lists one page. [directoryId] must be null (the share root) or an id previously handed out
      * inside the same share.
@@ -45,6 +49,18 @@ class AndroidFileReader(
             .coerceIn(1, ProtocolConstants.FILE_MAX_LIST_ENTRIES)
         val offset = if (cursor == null) 0 else FileListCursor.decodeOrNull(cursor) ?: return null
 
+        if (share.kind == FileShareKind.COLLECTION) {
+            // Section 8.4.3: a collection has no folders, so a directoryId inside one cannot
+            // resolve to anything and is answered as unknown rather than as forbidden.
+            if (directoryId != null) {
+                return null
+            }
+            val items = collectionEntries(share)
+            val page = items.drop(offset).take(pageSize)
+            val more = items.size > offset + page.size
+            return FileListPage(page, if (more) FileListCursor.encode(offset + page.size) else null)
+        }
+
         val parentDocumentId = if (directoryId == null) {
             shareStore.rootDocumentId(share) ?: return null
         } else {
@@ -56,12 +72,12 @@ class AndroidFileReader(
             if (directoryId != null || offset > 0) {
                 return FileListPage(emptyList(), null)
             }
-            val entry = entryOf(share, parentDocumentId, share.uri) ?: return null
+            val entry = entryOf(share, parentDocumentId, share.primaryUri) ?: return null
             return FileListPage(listOf(entry), null)
         }
 
         val childrenUri = try {
-            DocumentsContract.buildChildDocumentsUriUsingTree(share.uri, parentDocumentId)
+            DocumentsContract.buildChildDocumentsUriUsingTree(share.primaryUri, parentDocumentId)
         } catch (error: IllegalArgumentException) {
             throw FileReadException("Share document id is not usable", error)
         }
@@ -121,10 +137,93 @@ class AndroidFileReader(
         }
     }
 
+    /**
+     * The items of a photo-picker collection.
+     *
+     * Every item is checked against the capability that governs the share: a video in a photo
+     * collection is dropped rather than delivered. The picker should not return one, but "should
+     * not" is not a guarantee, and `media.photos.read` must not become a way to read videos.
+     *
+     * Items Android no longer lets us read are skipped, so a collection shrinks honestly instead
+     * of answering with entries that fail on download.
+     */
+    private fun collectionEntries(share: StoredFileShare): List<FileEntry> {
+        val prefix = mimePrefixFor(share.capability) ?: return emptyList()
+        val entries = ArrayList<FileEntry>(share.uris.size)
+        for (uri in share.uris) {
+            val mimeType = try {
+                contentResolver.getType(uri)
+            } catch (_: SecurityException) {
+                null
+            } ?: continue
+            if (!mimeType.startsWith(prefix)) {
+                continue
+            }
+            val entry = openableEntry(share, uri, mimeType) ?: continue
+            entries.add(entry)
+        }
+        return entries
+    }
+
+    private fun mimePrefixFor(capability: Capability): String? = when (capability) {
+        Capability.MEDIA_PHOTOS_READ -> "image/"
+        Capability.MEDIA_VIDEOS_READ -> "video/"
+        else -> null
+    }
+
+    /** Reads one picked item through OpenableColumns, which is what the photo picker supports. */
+    private fun openableEntry(
+        share: StoredFileShare,
+        uri: Uri,
+        mimeType: String,
+    ): FileEntry? {
+        val cursor = try {
+            contentResolver.query(
+                uri,
+                arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE),
+                null,
+                null,
+                null,
+            )
+        } catch (_: SecurityException) {
+            null
+        } catch (_: IllegalArgumentException) {
+            null
+        } ?: return null
+
+        return cursor.use { row ->
+            if (!row.moveToFirst()) {
+                return@use null
+            }
+            val name = row.stringOrNull(OpenableColumns.DISPLAY_NAME) ?: return@use null
+            if (!FileNames.isAcceptableEntryName(name)) {
+                return@use null
+            }
+            val size = row.longOrNull(OpenableColumns.SIZE)?.takeIf { it >= 0L }
+            try {
+                FileEntry(
+                    id = idRegistry.idFor(share.shareId, uri.toString()),
+                    name = name,
+                    mimeType = mimeType,
+                    size = size,
+                    // The photo picker exposes no reliable modification time, and inventing one
+                    // would be worse than admitting there is none.
+                    modifiedAtEpochMillis = null,
+                    kind = FileEntryKind.FILE,
+                )
+            } catch (_: IllegalArgumentException) {
+                null
+            }
+        }
+    }
+
     private fun documentUri(share: StoredFileShare, documentId: String): Uri =
         when (share.kind) {
-            FileShareKind.FILE -> share.uri
-            FileShareKind.TREE -> DocumentsContract.buildDocumentUriUsingTree(share.uri, documentId)
+            FileShareKind.FILE -> share.primaryUri
+            FileShareKind.TREE ->
+                DocumentsContract.buildDocumentUriUsingTree(share.primaryUri, documentId)
+            // For a collection the document id IS the item URI, minted while listing.
+            FileShareKind.COLLECTION -> Uri.parse(documentId)
         }
 
     private fun entryOf(share: StoredFileShare, documentId: String, uri: Uri): FileEntry? =

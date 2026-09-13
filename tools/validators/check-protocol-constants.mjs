@@ -35,7 +35,15 @@ const FILES = {
  * Anything not listed here is a finding. Removing an entry must make the check pass,
  * never fail - otherwise the list becomes a place to hide problems.
  */
-const KNOWN_GAPS = [];
+const KNOWN_GAPS = [
+  {
+    id: 'server-implemented-capabilities',
+    reason:
+      'Das Geraet beherrscht media.photos.read und media.videos.read, der Server serviert sie ' +
+      'noch nicht (OPEN_WORK.md Milestone 4). Er darf sie deshalb nicht als implementiert ' +
+      'fuehren - eine beworbene Capability ohne Route waere schlimmer als die Luecke.',
+  },
+];
 
 const problems = [];
 const notes = [];

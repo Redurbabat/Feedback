@@ -1,5 +1,6 @@
 package com.redurbabat.feedback.files
 
+import com.redurbabat.feedback.protocol.Capability
 import com.redurbabat.feedback.protocol.MessageType
 import com.redurbabat.feedback.protocol.ProtocolConstants
 import com.redurbabat.feedback.protocol.ProtocolError
@@ -20,6 +21,9 @@ class FileReadException(message: String, cause: Throwable? = null) : Exception(m
 /** What the handler reads from. [AndroidFileReader] is the real implementation. */
 interface FileSource {
     fun shares(): List<FileShare>
+
+    /** The share itself, so the handler can check which capability governs it. */
+    fun findShare(shareId: String): FileShare?
 
     fun list(shareId: String, directoryId: String?, cursor: String?, limit: Int?): FileListPage?
 
@@ -65,17 +69,34 @@ class FilesRequestHandler(
 
     val activeTransferCount: Int get() = transfers.size
 
-    fun handleSharesRequest(): FilesOutcome {
+    /**
+     * Whether this share may be touched at all.
+     *
+     * A share is governed by exactly one capability (section 8.3.1). A share whose capability is
+     * not effective answers `NOT_FOUND` rather than `FORBIDDEN`, so knowing a shareId never
+     * confirms that it exists.
+     */
+    private fun reachable(shareId: String, allowed: Set<Capability>): Boolean {
+        val share = source.findShare(shareId) ?: return false
+        return share.capability in allowed
+    }
+
+    fun handleSharesRequest(allowed: Set<Capability>): FilesOutcome {
         val array = JSONArray()
         for (share in source.shares()) {
-            array.put(share.toJson())
+            if (share.capability in allowed) {
+                array.put(share.toJson())
+            }
         }
         return reply(MessageType.FILES_SHARES_RESPONSE, JSONObject().put(FIELD_SHARES, array))
     }
 
-    fun handleListRequest(payload: JSONObject): FilesOutcome {
+    fun handleListRequest(payload: JSONObject, allowed: Set<Capability>): FilesOutcome {
         val shareId = payload.opaqueId(FIELD_SHARE_ID)
             ?: return invalid("shareId fehlt oder ist unzulaessig")
+        if (!reachable(shareId, allowed)) {
+            return notFound()
+        }
         val directoryId = when (val supplied = payload.optionalOpaqueId(FIELD_DIRECTORY_ID)) {
             OptionalId.Absent -> null
             is OptionalId.Present -> supplied.value
@@ -106,11 +127,14 @@ class FilesRequestHandler(
         return reply(MessageType.FILES_LIST_RESPONSE, response)
     }
 
-    fun handleMetadataRequest(payload: JSONObject): FilesOutcome {
+    fun handleMetadataRequest(payload: JSONObject, allowed: Set<Capability>): FilesOutcome {
         val shareId = payload.opaqueId(FIELD_SHARE_ID)
             ?: return invalid("shareId fehlt oder ist unzulaessig")
         val fileId = payload.opaqueId(FIELD_FILE_ID)
             ?: return invalid("fileId fehlt oder ist unzulaessig")
+        if (!reachable(shareId, allowed)) {
+            return notFound()
+        }
 
         val entry = try {
             source.metadata(shareId, fileId)
@@ -125,13 +149,16 @@ class FilesRequestHandler(
     }
 
     /** Starts a transfer. Chunks then come from [drainReadyMessages]. */
-    fun handleDownloadStart(payload: JSONObject): FilesOutcome {
+    fun handleDownloadStart(payload: JSONObject, allowed: Set<Capability>): FilesOutcome {
         val transferId = payload.opaqueId(FIELD_TRANSFER_ID)
             ?: return invalid("transferId fehlt oder ist unzulaessig")
         val shareId = payload.opaqueId(FIELD_SHARE_ID)
             ?: return invalid("shareId fehlt oder ist unzulaessig")
         val fileId = payload.opaqueId(FIELD_FILE_ID)
             ?: return invalid("fileId fehlt oder ist unzulaessig")
+        if (!reachable(shareId, allowed)) {
+            return notFound()
+        }
 
         if (transfers.containsKey(transferId)) {
             return invalid("transferId ist bereits aktiv")

@@ -1,5 +1,7 @@
 package com.redurbabat.feedback.files
 
+import com.redurbabat.feedback.protocol.Capability
+
 /**
  * Wording for the local share management screen.
  *
@@ -16,6 +18,13 @@ object FileSharePresentation {
     fun kindLabel(kind: FileShareKind): String = when (kind) {
         FileShareKind.TREE -> "Ordner"
         FileShareKind.FILE -> "Einzelne Datei"
+        FileShareKind.COLLECTION -> "Auswahl"
+    }
+
+    /** What a media selection is called once it holds a known number of items. */
+    fun collectionLabel(itemCount: Int): String = when (itemCount) {
+        1 -> "Auswahl · 1 Element"
+        else -> "Auswahl · $itemCount Elemente"
     }
 
     /**
@@ -52,6 +61,25 @@ object FileSharePresentation {
             "Für $count freigegebene Bereiche hat Android den Zugriff entzogen. " +
                 "Sie sind nicht mehr abrufbar und können entfernt werden."
     }
+
+    /** What governs this area, in the owner's words. */
+    fun capabilityLabel(capability: Capability): String = when (capability) {
+        Capability.FILES_READ -> "Dateizugriff"
+        Capability.MEDIA_PHOTOS_READ -> "Fotos"
+        Capability.MEDIA_VIDEOS_READ -> "Videos"
+        else -> capability.wireName
+    }
+
+    /**
+     * The line under a shared area: what it is, which switch governs it, and how long ago it was
+     * handed over. The capability is named because two areas can look alike and be governed by
+     * different switches.
+     */
+    fun shareLine(share: FileShare, nowEpochMillis: Long): String = listOf(
+        kindLabel(share.kind),
+        capabilityLabel(share.capability),
+        addedLabel(share.addedAtEpochMillis, nowEpochMillis),
+    ).joinToString(" · ")
 
     /** Summary line under the capability switch. */
     fun shareSummary(availableCount: Int): String = when (availableCount) {

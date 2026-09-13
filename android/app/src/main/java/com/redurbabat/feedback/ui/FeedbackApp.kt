@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -52,8 +53,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.redurbabat.feedback.agent.AgentConnectionState
+import com.redurbabat.feedback.protocol.Capability
 import com.redurbabat.feedback.files.FileShare
 import com.redurbabat.feedback.files.FileShareKind
+import com.redurbabat.feedback.files.FileShareStore
 import com.redurbabat.feedback.files.FileSharePresentation
 import com.redurbabat.feedback.security.AutoLockTimeout
 import com.redurbabat.feedback.security.SensitiveAction
@@ -92,6 +95,28 @@ fun FeedbackApp(
     ) { uri ->
         if (uri != null) {
             controller.addFileShare(uri, FileShareKind.FILE)
+        }
+    }
+
+    // Androids Fotoauswahl braucht KEINE Laufzeitberechtigung. Sie ist genau dafuer gebaut,
+    // Zugriff auf das Ausgewaehlte zu geben und auf nichts sonst - eine App, die stattdessen
+    // READ_MEDIA_IMAGES anfordert, bekommt die ganze Mediathek.
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(
+            FileShareStore.MAX_COLLECTION_ITEMS,
+        ),
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            controller.addMediaShare(uris, Capability.MEDIA_PHOTOS_READ)
+        }
+    }
+    val videoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(
+            FileShareStore.MAX_COLLECTION_ITEMS,
+        ),
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            controller.addMediaShare(uris, Capability.MEDIA_VIDEOS_READ)
         }
     }
 
@@ -137,8 +162,17 @@ fun FeedbackApp(
                     onServerUrlChanged = controller::setServerUrl,
                     onStartPairing = controller::startPairing,
                     onCancelPairing = controller::cancelPairing,
-                    onSystemInfoChanged = controller::setSystemInfoGranted,
-                    onFilesReadChanged = controller::setFilesReadGranted,
+                    onCapabilityChanged = controller::setCapabilityGranted,
+                    onPickPhotos = {
+                        photoPickerLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                        )
+                    },
+                    onPickVideos = {
+                        videoPickerLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly),
+                        )
+                    },
                     onPickFolderShare = { folderPickerLauncher.launch(null) },
                     onPickFileShare = { filePickerLauncher.launch(arrayOf("*/*")) },
                     onRemoveFileShare = controller::removeFileShare,
@@ -175,8 +209,9 @@ private fun HomeScreen(
     onServerUrlChanged: (String) -> Unit,
     onStartPairing: () -> Unit,
     onCancelPairing: () -> Unit,
-    onSystemInfoChanged: (Boolean) -> Unit,
-    onFilesReadChanged: (Boolean) -> Unit,
+    onCapabilityChanged: (Capability, Boolean) -> Unit,
+    onPickPhotos: () -> Unit,
+    onPickVideos: () -> Unit,
     onPickFolderShare: () -> Unit,
     onPickFileShare: () -> Unit,
     onRemoveFileShare: (String) -> Unit,
@@ -236,11 +271,8 @@ private fun HomeScreen(
                 onEnabledChanged = onBackgroundConnectionChanged,
             )
             CapabilityCard(
-                systemInfoGranted = state.systemInfoGrantedLocally,
-                onSystemInfoChanged = onSystemInfoChanged,
-                filesReadGranted = state.filesReadGrantedLocally,
-                onFilesReadChanged = onFilesReadChanged,
-                sharedAreaCount = state.fileShares.size,
+                state = state,
+                onCapabilityChanged = onCapabilityChanged,
             )
             FileShareCard(
                 shares = state.fileShares,
@@ -249,6 +281,8 @@ private fun HomeScreen(
                 filesReadGranted = state.filesReadGrantedLocally,
                 onPickFolderShare = onPickFolderShare,
                 onPickFileShare = onPickFileShare,
+                onPickPhotos = onPickPhotos,
+                onPickVideos = onPickVideos,
                 onRemoveFileShare = onRemoveFileShare,
                 onForgetUnavailableFileShares = onForgetUnavailableFileShares,
             )
@@ -568,11 +602,8 @@ private const val PERSISTABLE_READ_FLAGS =
 
 @Composable
 private fun CapabilityCard(
-    systemInfoGranted: Boolean,
-    onSystemInfoChanged: (Boolean) -> Unit,
-    filesReadGranted: Boolean,
-    onFilesReadChanged: (Boolean) -> Unit,
-    sharedAreaCount: Int,
+    state: FeedbackUiState,
+    onCapabilityChanged: (Capability, Boolean) -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -596,16 +627,32 @@ private fun CapabilityCard(
             CapabilityRow(
                 title = "Systeminformationen",
                 description = "Modell, Android-Version, Akku, Speicher und Netzwerktyp. Keine IMEI, MAC-Adresse oder Telefonnummer.",
-                checked = systemInfoGranted,
-                onCheckedChange = onSystemInfoChanged,
+                checked = state.systemInfoGrantedLocally,
+                onCheckedChange = { onCapabilityChanged(Capability.SYSTEM_INFO, it) },
             )
             HorizontalDivider()
             CapabilityRow(
                 title = "Dateizugriff",
-                description = "Nur lesen, und nur in den Bereichen, die du unten freigibst. " +
-                    FileSharePresentation.shareSummary(sharedAreaCount),
-                checked = filesReadGranted,
-                onCheckedChange = onFilesReadChanged,
+                description = "Nur lesen, und nur in den Ordnern und Dateien, die du unten freigibst. " +
+                    FileSharePresentation.shareSummary(
+                        state.fileShares.count { it.capability == Capability.FILES_READ },
+                    ),
+                checked = state.filesReadGrantedLocally,
+                onCheckedChange = { onCapabilityChanged(Capability.FILES_READ, it) },
+            )
+            HorizontalDivider()
+            CapabilityRow(
+                title = "Fotos",
+                description = "Nur die Bilder, die du unten über Androids Fotoauswahl auswählst. Videos bleiben davon unberührt.",
+                checked = state.mediaPhotosGrantedLocally,
+                onCheckedChange = { onCapabilityChanged(Capability.MEDIA_PHOTOS_READ, it) },
+            )
+            HorizontalDivider()
+            CapabilityRow(
+                title = "Videos",
+                description = "Nur die Videos, die du unten über Androids Fotoauswahl auswählst. Fotos bleiben davon unberührt.",
+                checked = state.mediaVideosGrantedLocally,
+                onCheckedChange = { onCapabilityChanged(Capability.MEDIA_VIDEOS_READ, it) },
             )
         }
     }
@@ -653,6 +700,8 @@ private fun FileShareCard(
     filesReadGranted: Boolean,
     onPickFolderShare: () -> Unit,
     onPickFileShare: () -> Unit,
+    onPickPhotos: () -> Unit,
+    onPickVideos: () -> Unit,
     onRemoveFileShare: (String) -> Unit,
     onForgetUnavailableFileShares: () -> Unit,
 ) {
@@ -671,7 +720,7 @@ private fun FileShareCard(
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                text = "Feedback sieht ausschließlich, was du hier über Androids eigenen Dateiauswahldialog übergibst. Es fordert keinen pauschalen Speicherzugriff an und kann nichts ändern, löschen oder öffnen.",
+                text = "Feedback sieht ausschließlich, was du hier über Androids eigene Auswahldialoge übergibst. Es fordert weder pauschalen Speicherzugriff noch eine Medienberechtigung an und kann nichts ändern, löschen oder öffnen.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -719,9 +768,7 @@ private fun FileShareCard(
                         ) {
                             Text(share.displayName, style = MaterialTheme.typography.bodyLarge)
                             Text(
-                                text = FileSharePresentation.kindLabel(share.kind) +
-                                    " · " +
-                                    FileSharePresentation.addedLabel(share.addedAtEpochMillis, now),
+                                text = FileSharePresentation.shareLine(share, now),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -754,6 +801,27 @@ private fun FileShareCard(
                     modifier = Modifier.weight(1f),
                 ) {
                     Text("Datei freigeben")
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                // Two separate pickers, because the two capabilities are separate: a photo
+                // selection never becomes a way to read videos.
+                OutlinedButton(
+                    onClick = onPickPhotos,
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Fotos auswählen")
+                }
+                OutlinedButton(
+                    onClick = onPickVideos,
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Videos auswählen")
                 }
             }
         }

@@ -26,8 +26,13 @@ class CapabilityTest {
      * this list has to be edited deliberately - never to make a failing test pass.
      */
     @Test
-    fun exactlySystemInfoAndFilesReadAreImplementedInV1() {
-        val implemented = setOf(Capability.SYSTEM_INFO, Capability.FILES_READ)
+    fun exactlyTheFourReadCapabilitiesAreImplementedInV1() {
+        val implemented = setOf(
+            Capability.SYSTEM_INFO,
+            Capability.FILES_READ,
+            Capability.MEDIA_PHOTOS_READ,
+            Capability.MEDIA_VIDEOS_READ,
+        )
         for (capability in Capability.values()) {
             assertEquals(
                 capability.wireName,
@@ -35,6 +40,53 @@ class CapabilityTest {
                 capability.implemented,
             )
         }
+    }
+
+    /**
+     * Section 8.4.2: the two media capabilities are separate. Granting one must never be a way to
+     * read the other, which is exactly the mistake a shared "media" permission would invite.
+     */
+    @Test
+    fun grantingPhotosDoesNotGrantVideos() {
+        val videos = EffectivePermission.evaluate(
+            capability = Capability.MEDIA_VIDEOS_READ,
+            serverGranted = setOf(Capability.MEDIA_PHOTOS_READ),
+            deviceGranted = setOf(Capability.MEDIA_PHOTOS_READ),
+            osAvailable = setOf(Capability.MEDIA_PHOTOS_READ, Capability.MEDIA_VIDEOS_READ),
+            sessionAuthorized = setOf(Capability.MEDIA_PHOTOS_READ, Capability.MEDIA_VIDEOS_READ),
+        )
+        assertFalse("photos must not imply videos", videos.effective)
+
+        val photos = EffectivePermission.evaluate(
+            capability = Capability.MEDIA_PHOTOS_READ,
+            serverGranted = setOf(Capability.MEDIA_VIDEOS_READ),
+            deviceGranted = setOf(Capability.MEDIA_VIDEOS_READ),
+            osAvailable = setOf(Capability.MEDIA_PHOTOS_READ, Capability.MEDIA_VIDEOS_READ),
+            sessionAuthorized = setOf(Capability.MEDIA_PHOTOS_READ, Capability.MEDIA_VIDEOS_READ),
+        )
+        assertFalse("videos must not imply photos", photos.effective)
+    }
+
+    /** And neither of them is a way into files.read, nor the other way round. */
+    @Test
+    fun mediaAndFilesDoNotImplyEachOther() {
+        val files = EffectivePermission.evaluate(
+            capability = Capability.FILES_READ,
+            serverGranted = setOf(Capability.MEDIA_PHOTOS_READ, Capability.MEDIA_VIDEOS_READ),
+            deviceGranted = setOf(Capability.MEDIA_PHOTOS_READ, Capability.MEDIA_VIDEOS_READ),
+            osAvailable = setOf(Capability.FILES_READ),
+            sessionAuthorized = setOf(Capability.FILES_READ),
+        )
+        assertFalse("media must not imply files", files.effective)
+
+        val photos = EffectivePermission.evaluate(
+            capability = Capability.MEDIA_PHOTOS_READ,
+            serverGranted = setOf(Capability.FILES_READ),
+            deviceGranted = setOf(Capability.FILES_READ),
+            osAvailable = setOf(Capability.MEDIA_PHOTOS_READ),
+            sessionAuthorized = setOf(Capability.MEDIA_PHOTOS_READ),
+        )
+        assertFalse("files must not imply media", photos.effective)
     }
 
     @Test

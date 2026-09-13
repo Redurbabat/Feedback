@@ -32,6 +32,22 @@ enum class SensitiveAction(
         confirmLabel = "Freigeben",
         alwaysRequiresSecret = false,
     ),
+    GRANT_MEDIA_PHOTOS(
+        title = "Fotos freigeben",
+        description = "Das Control Center darf dann die Bilder lesen und herunterladen, die du " +
+            "unten ueber Androids Fotoauswahl auswaehlst - und nur diese. Videos sind davon " +
+            "nicht betroffen. Zur Bestätigung PIN oder Passphrase eingeben.",
+        confirmLabel = "Freigeben",
+        alwaysRequiresSecret = false,
+    ),
+    GRANT_MEDIA_VIDEOS(
+        title = "Videos freigeben",
+        description = "Das Control Center darf dann die Videos lesen und herunterladen, die du " +
+            "unten ueber Androids Fotoauswahl auswaehlst - und nur diese. Fotos sind davon " +
+            "nicht betroffen. Zur Bestätigung PIN oder Passphrase eingeben.",
+        confirmLabel = "Freigeben",
+        alwaysRequiresSecret = false,
+    ),
     GRANT_FILES_READ(
         title = "Dateizugriff freigeben",
         description = "Das Control Center darf dann die Bereiche lesen und herunterladen, die du " +

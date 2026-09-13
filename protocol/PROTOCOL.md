@@ -343,7 +343,8 @@ clipboard.write
 Keine implizite Hierarchie: `screen.control` impliziert nicht `files.read`,
 `files.read` impliziert nicht `media.photos.read`.
 
-In v1 sind `system.info` und `files.read` **implementiert**. Alle anderen Capabilities sind
+In v1 sind `system.info`, `files.read`, `media.photos.read` und `media.videos.read`
+**implementiert**. Alle anderen Capabilities sind
 deklariert, deny-by-default und liefern `UNSUPPORTED`, solange kein Feature dahintersteht.
 
 Effektive Berechtigung:
@@ -401,11 +402,19 @@ ueber das Protokoll sichtbar.
   "shareId": "<opaque, base64url>",
   "displayName": "Documents",
   "kind": "tree",
+  "capability": "files.read",
   "addedAt": "2026-09-13T11:22:33.000Z"
 }
 ```
 
-`kind` ist `tree` (Verzeichnis) oder `file` (einzelne Datei).
+`kind` ist `tree` (Verzeichnis), `file` (einzelne Datei) oder `collection` (mehrere einzeln
+ausgewaehlte Elemente, siehe Abschnitt 8.4).
+
+`capability` nennt die **eine** Capability, die diesen Bereich regiert: `files.read`,
+`media.photos.read` oder `media.videos.read`. Es gibt keine Hierarchie und keine Mehrfachzuordnung.
+Ein Bereich, dessen Capability in der Remote-Session nicht autorisiert oder lokal nicht freigegeben
+ist, erscheint nicht in `files.shares.response` und ist auch nicht ueber seine `shareId`
+erreichbar - eine bekannte `shareId` allein oeffnet nichts.
 
 #### 8.3.2 Opake IDs
 
@@ -520,6 +529,60 @@ Mehr als `FILE_MAX_CONCURRENT_TRANSFERS` gleichzeitige Transfers pro Geraet ⇒ 
 Der Server reicht Chunks durch und schreibt Dateiinhalte **nicht** auf Platte, weder als Cache
 noch als Zwischenablage. Ein abgebrochener Transfer hinterlaesst keine Teildatei. Dateiinhalte,
 Dateinamen und `fileId`-Werte erscheinen niemals im Log (Abschnitt 12).
+
+### 8.4 `media.photos.read` und `media.videos.read`
+
+Medien nutzen **dieselben** Nachrichtentypen und dieselbe Uebertragungsstrecke wie `files.read`
+(Abschnitt 8.3). Unterschiedlich ist nur, woher ein Bereich stammt und welche Capability ihn regiert.
+
+Das ist Absicht: Chunking, Gegendruck, Sequenzpruefung und `sha256` sind die Stellen, an denen ein
+Fehler am teuersten ist. Eine zweite, parallele Implementierung davon waere eine zweite
+Gelegenheit, sie falsch zu bekommen.
+
+#### 8.4.1 Herkunft
+
+Ein Medienbereich entsteht ausschliesslich ueber Androids **Photo Picker**
+(`ACTION_PICK_IMAGES` / `PickVisualMedia`). Der Besitzer waehlt dort einzelne Bilder oder Videos aus.
+
+Feedback fordert dafuer **keine** Laufzeitberechtigung an - weder `READ_MEDIA_IMAGES` noch
+`READ_MEDIA_VIDEO` noch `READ_EXTERNAL_STORAGE`. Der Photo Picker ist genau dafuer gebaut: er
+gibt Zugriff auf das Ausgewaehlte und auf nichts sonst. Eine App, die stattdessen die
+Medienberechtigung anfordert, bekommt Zugriff auf die gesamte Mediathek; das waere das Gegenteil
+dessen, was hier gemeint ist.
+
+#### 8.4.2 Trennung der beiden Capabilities
+
+`media.photos.read` und `media.videos.read` sind getrennt und implizieren einander nicht. Der
+Picker wird deshalb pro Capability getrennt geoeffnet: eine Bildauswahl erzeugt einen Bereich mit
+`capability = "media.photos.read"`, eine Videoauswahl einen mit `capability = "media.videos.read"`.
+Ein Bereich mischt niemals beides.
+
+Das Geraet prueft zusaetzlich den MIME-Typ jedes Elements: ein Video in einem Fotobereich wird
+nicht ausgeliefert, auch wenn der Picker es geliefert haette.
+
+#### 8.4.3 Sammlung (`kind = "collection"`)
+
+Eine Auswahl von zwoelf Bildern ist **ein** Bereich mit zwoelf Eintraegen, nicht zwoelf Bereiche.
+Sonst waere `MAX_SHARES` nach einer einzigen Auswahl erschoepft und die Liste unbenutzbar.
+
+Fuer eine Sammlung gilt:
+
+- `files.list.request` ohne `directoryId` liefert die Elemente der Sammlung.
+- Ein `directoryId` innerhalb einer Sammlung gibt es nicht; eine Anfrage mit `directoryId`
+  wird mit `NOT_FOUND` beantwortet.
+- Alle Eintraege haben `kind = "file"`. Sammlungen enthalten keine Ordner.
+- `files.metadata.request` und `files.download.start` verhalten sich unveraendert.
+
+#### 8.4.4 Was nicht uebertragen wird
+
+Medienelemente tragen haeufig Aufnahmeort, Geraetemodell und Zeitstempel in ihren Metadaten.
+Das Protokoll uebertraegt davon **nichts**: ein `FileEntry` enthaelt Name, MIME-Typ, Groesse,
+Aenderungszeit und sonst nichts. Insbesondere werden keine EXIF-Daten, keine Koordinaten und
+keine Vorschaubilder als eigene Felder uebertragen.
+
+Der Dateiinhalt selbst wird unveraendert uebertragen. Enthaelt eine Bilddatei EXIF-Koordinaten,
+sind sie im heruntergeladenen Inhalt enthalten - so wie sie es waeren, wenn der Besitzer die
+Datei selbst kopiert haette. Das Protokoll entfernt sie nicht und gibt auch nicht vor, es zu tun.
 
 ## 9. Remote-Sessions
 

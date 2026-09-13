@@ -1,5 +1,6 @@
 package com.redurbabat.feedback.files
 
+import com.redurbabat.feedback.protocol.Capability
 import com.redurbabat.feedback.protocol.Iso8601
 import com.redurbabat.feedback.protocol.ProtocolConstants
 import org.json.JSONArray
@@ -21,6 +22,13 @@ enum class FileEntryKind(val wireName: String) {
 enum class FileShareKind(val wireName: String) {
     TREE("tree"),
     FILE("file"),
+
+    /**
+     * Several individually picked items, from Android's photo picker. Twelve pictures are one
+     * share with twelve entries rather than twelve shares - otherwise a single selection would
+     * exhaust MAX_SHARES and the list would be unusable.
+     */
+    COLLECTION("collection"),
     ;
 
     companion object {
@@ -36,32 +44,40 @@ data class FileShare(
     val shareId: String,
     val displayName: String,
     val kind: FileShareKind,
+    /**
+     * The one capability that governs this area (section 8.3.1). There is no hierarchy and no
+     * multiple assignment: a share is reachable exactly when this capability is effective.
+     */
+    val capability: Capability,
     val addedAtEpochMillis: Long,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put(FIELD_SHARE_ID, shareId)
         .put(FIELD_DISPLAY_NAME, displayName)
         .put(FIELD_KIND, kind.wireName)
+        .put(FIELD_CAPABILITY, capability.wireName)
         .put(FIELD_ADDED_AT, Iso8601.format(addedAtEpochMillis))
 
     companion object {
         const val FIELD_SHARE_ID = "shareId"
         const val FIELD_DISPLAY_NAME = "displayName"
         const val FIELD_KIND = "kind"
+        const val FIELD_CAPABILITY = "capability"
         const val FIELD_ADDED_AT = "addedAt"
 
         fun fromJsonOrNull(json: JSONObject): FileShare? = try {
             val shareId = json.getString(FIELD_SHARE_ID)
             val displayName = json.getString(FIELD_DISPLAY_NAME)
             val kind = FileShareKind.fromWire(json.getString(FIELD_KIND))
+            val capability = Capability.fromWire(json.getString(FIELD_CAPABILITY))
             val addedAt = Iso8601.parse(json.getString(FIELD_ADDED_AT))
-            if (kind == null || addedAt == null ||
+            if (kind == null || addedAt == null || capability == null ||
                 !FileNames.isAcceptableOpaqueId(shareId) ||
                 !FileNames.isAcceptableDisplayName(displayName)
             ) {
                 null
             } else {
-                FileShare(shareId, displayName, kind, addedAt)
+                FileShare(shareId, displayName, kind, capability, addedAt)
             }
         } catch (_: JSONException) {
             null

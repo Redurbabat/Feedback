@@ -1,5 +1,6 @@
 package com.redurbabat.feedback.files
 
+import com.redurbabat.feedback.protocol.Capability
 import com.redurbabat.feedback.protocol.ProtocolConstants
 import org.json.JSONArray
 import org.json.JSONObject
@@ -163,7 +164,13 @@ class FileEntryTest {
 
     @Test
     fun `a share round trips and rejects a non opaque id`() {
-        val share = FileShare("c2hhcmUx", "Documents", FileShareKind.TREE, 1_757_754_720_000L)
+        val share = FileShare(
+            "c2hhcmUx",
+            "Documents",
+            FileShareKind.TREE,
+            Capability.FILES_READ,
+            1_757_754_720_000L,
+        )
         assertEquals(share, FileShare.fromJsonOrNull(share.toJson()))
 
         val json = share.toJson()
@@ -179,6 +186,7 @@ class FileEntryTest {
     fun `share kinds are exactly tree and file`() {
         assertNotNull(FileShareKind.fromWire("tree"))
         assertNotNull(FileShareKind.fromWire("file"))
+        assertNotNull(FileShareKind.fromWire("collection"))
         assertNull(FileShareKind.fromWire("directory"))
     }
 

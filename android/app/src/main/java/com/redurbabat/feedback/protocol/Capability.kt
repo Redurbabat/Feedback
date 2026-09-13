@@ -4,8 +4,9 @@ package com.redurbabat.feedback.protocol
  * Capability list v1 (protocol/PROTOCOL.md section 8.1). There is no implicit hierarchy:
  * `screen.control` does not imply `files.read`, `files.read` does not imply `media.photos.read`.
  *
- * `system.info` and `files.read` are implemented in v1. Everything else is declared, denied by
- * default and answers with [ProtocolError.UNSUPPORTED] until a real feature exists behind it.
+ * `system.info`, `files.read`, `media.photos.read` and `media.videos.read` are implemented in v1.
+ * Everything else is declared, denied by default and answers with [ProtocolError.UNSUPPORTED]
+ * until a real feature exists behind it.
  */
 enum class Capability(
     val wireName: String,
@@ -13,8 +14,8 @@ enum class Capability(
 ) {
     SYSTEM_INFO("system.info", true),
     FILES_READ("files.read", true),
-    MEDIA_PHOTOS_READ("media.photos.read", false),
-    MEDIA_VIDEOS_READ("media.videos.read", false),
+    MEDIA_PHOTOS_READ("media.photos.read", true),
+    MEDIA_VIDEOS_READ("media.videos.read", true),
     SCREEN_VIEW("screen.view", false),
     SCREEN_CONTROL("screen.control", false),
     CLIPBOARD_READ("clipboard.read", false),

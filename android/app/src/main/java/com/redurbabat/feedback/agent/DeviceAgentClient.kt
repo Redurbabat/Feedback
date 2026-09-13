@@ -45,6 +45,18 @@ import org.json.JSONObject
  * may keep it running where Android permits; this transport itself only authenticates, reports
  * presence and answers explicitly permitted protocol requests.
  */
+/**
+ * The capabilities that can govern a shared area (protocol section 8.3.1).
+ *
+ * Listed explicitly rather than derived from "everything implemented", so adding a new
+ * implemented capability does not silently make it a way to read shares.
+ */
+private val SHARE_CAPABILITIES = listOf(
+    Capability.FILES_READ,
+    Capability.MEDIA_PHOTOS_READ,
+    Capability.MEDIA_VIDEOS_READ,
+)
+
 class DeviceAgentClient(
     private val storedRegistration: StoredDeviceRegistration,
     private val metadata: DeviceMetadata,
@@ -270,25 +282,37 @@ class DeviceAgentClient(
             return
         }
 
-        val permission = EffectivePermission.evaluate(
-            capability = Capability.FILES_READ,
-            serverGranted = serverGranted,
-            deviceGranted = localCapabilities.granted(),
-            osAvailable = setOf(Capability.FILES_READ),
-            sessionAuthorized = setOf(Capability.FILES_READ),
-        )
-        val denial = permission.denialReason()
-        if (denial != null) {
+        // Each capability is evaluated on its own: there is no hierarchy, so granting
+        // media.photos.read must never open a files.read share, and the other way round.
+        val deviceGranted = localCapabilities.granted()
+        val allowed = SHARE_CAPABILITIES.filterTo(LinkedHashSet()) { capability ->
+            EffectivePermission.evaluate(
+                capability = capability,
+                serverGranted = serverGranted,
+                deviceGranted = deviceGranted,
+                osAvailable = setOf(capability),
+                sessionAuthorized = setOf(capability),
+            ).denialReason() == null
+        }
+
+        if (allowed.isEmpty()) {
             cancelFileTransfers(socket, FileTransferCancelReason.CAPABILITY_REVOKED)
-            sendError(socket, envelope.messageId, denial, "files.read ist nicht freigegeben")
+            sendError(
+                socket,
+                envelope.messageId,
+                ProtocolError.CAPABILITY_DENIED,
+                "Kein Lesezugriff ist freigegeben",
+            )
             return
         }
 
         val outcome = when (envelope.type) {
-            MessageType.FILES_SHARES_REQUEST -> handler.handleSharesRequest()
-            MessageType.FILES_LIST_REQUEST -> handler.handleListRequest(envelope.payload)
-            MessageType.FILES_METADATA_REQUEST -> handler.handleMetadataRequest(envelope.payload)
-            MessageType.FILES_DOWNLOAD_START -> handler.handleDownloadStart(envelope.payload)
+            MessageType.FILES_SHARES_REQUEST -> handler.handleSharesRequest(allowed)
+            MessageType.FILES_LIST_REQUEST -> handler.handleListRequest(envelope.payload, allowed)
+            MessageType.FILES_METADATA_REQUEST ->
+                handler.handleMetadataRequest(envelope.payload, allowed)
+            MessageType.FILES_DOWNLOAD_START ->
+                handler.handleDownloadStart(envelope.payload, allowed)
             MessageType.FILES_DOWNLOAD_ACK -> handler.handleDownloadAck(envelope.payload)
             MessageType.FILES_DOWNLOAD_CANCEL -> handler.handleCancel(envelope.payload)
             else -> FilesOutcome.Failure(ProtocolError.UNSUPPORTED, "Unerwarteter files-Typ")
