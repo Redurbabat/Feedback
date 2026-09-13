@@ -1,0 +1,239 @@
+{
+  "version": 1,
+  "section": "8.5",
+  "note": [
+    "Canonical screen.view frames, read by BOTH implementations.",
+    "server/test/protocol/fixtures.test.ts checks them against the zod schemas the server",
+    "actually uses; android ScreenFixtureTest.kt drives the real handler with them and compares",
+    "what it produces key for key. A field renamed on one side alone fails on the other.",
+    "tools/validators/check-protocol-fixtures.mjs makes sure every screen type in PROTOCOL.md",
+    "section 7.1 appears here, so a new message type cannot arrive without an example.",
+    "Ids are fixed rather than random: a fixture that changes per run is not a fixture."
+  ],
+  "accepted": [
+    {
+      "name": "start",
+      "type": "screen.start",
+      "direction": "server-to-device",
+      "payload": {
+        "streamId": "3f2a91b0-5c41-4d8e-9a77-1b0c2d3e4f50",
+        "maxWidth": 1280,
+        "maxHeight": 1280,
+        "maxFps": 15,
+        "maxBitrateKbps": 2500
+      }
+    },
+    {
+      "name": "consent pending",
+      "type": "screen.consent",
+      "direction": "device-to-server",
+      "payload": {
+        "streamId": "3f2a91b0-5c41-4d8e-9a77-1b0c2d3e4f50",
+        "state": "pending"
+      }
+    },
+    {
+      "name": "consent granted",
+      "type": "screen.consent",
+      "direction": "device-to-server",
+      "payload": {
+        "streamId": "3f2a91b0-5c41-4d8e-9a77-1b0c2d3e4f50",
+        "state": "granted"
+      }
+    },
+    {
+      "name": "consent declined",
+      "type": "screen.consent",
+      "direction": "device-to-server",
+      "payload": {
+        "streamId": "3f2a91b0-5c41-4d8e-9a77-1b0c2d3e4f50",
+        "state": "declined"
+      }
+    },
+    {
+      "name": "started",
+      "type": "screen.started",
+      "direction": "device-to-server",
+      "payload": {
+        "streamId": "3f2a91b0-5c41-4d8e-9a77-1b0c2d3e4f50",
+        "width": 720,
+        "height": 1280,
+        "codec": "avc1.42E01E",
+        "fps": 15,
+        "config": "AAAAAWdCwB7ZQFAW7AQAAAMABAAAAwDwPGDGWA=="
+      }
+    },
+    {
+      "name": "keyframe chunk",
+      "type": "screen.frame",
+      "direction": "device-to-server",
+      "payload": {
+        "streamId": "3f2a91b0-5c41-4d8e-9a77-1b0c2d3e4f50",
+        "sequence": 0,
+        "chunkIndex": 0,
+        "chunkCount": 2,
+        "keyFrame": true,
+        "timestampUs": 0,
+        "data": "AAAAAWVIgA=="
+      }
+    },
+    {
+      "name": "delta frame after a gap",
+      "type": "screen.frame",
+      "direction": "device-to-server",
+      "payload": {
+        "streamId": "3f2a91b0-5c41-4d8e-9a77-1b0c2d3e4f50",
+        "sequence": 9,
+        "chunkIndex": 0,
+        "chunkCount": 1,
+        "keyFrame": false,
+        "timestampUs": 594000,
+        "data": "AAAAAUGkAA=="
+      }
+    },
+    {
+      "name": "frame ack",
+      "type": "screen.frame.ack",
+      "direction": "server-to-device",
+      "payload": {
+        "streamId": "3f2a91b0-5c41-4d8e-9a77-1b0c2d3e4f50",
+        "sequence": 9
+      }
+    },
+    {
+      "name": "keyframe request",
+      "type": "screen.keyframe.request",
+      "direction": "server-to-device",
+      "payload": {
+        "streamId": "3f2a91b0-5c41-4d8e-9a77-1b0c2d3e4f50"
+      }
+    },
+    {
+      "name": "stop by the owner",
+      "type": "screen.stop",
+      "direction": "device-to-server",
+      "payload": {
+        "streamId": "3f2a91b0-5c41-4d8e-9a77-1b0c2d3e4f50",
+        "reason": "owner_stopped"
+      }
+    },
+    {
+      "name": "stop by the viewer",
+      "type": "screen.stop",
+      "direction": "server-to-device",
+      "payload": {
+        "streamId": "3f2a91b0-5c41-4d8e-9a77-1b0c2d3e4f50",
+        "reason": "client_cancelled"
+      }
+    }
+  ],
+  "rejected": [
+    {
+      "name": "unknown field",
+      "type": "screen.frame",
+      "direction": "device-to-server",
+      "why": "Schemas are strict: a field nobody agreed on is a refusal, not a curiosity.",
+      "payload": {
+        "streamId": "3f2a91b0-5c41-4d8e-9a77-1b0c2d3e4f50",
+        "sequence": 0,
+        "chunkIndex": 0,
+        "chunkCount": 1,
+        "keyFrame": true,
+        "timestampUs": 0,
+        "data": "AAAAAWVIgA==",
+        "audio": "AAAA"
+      }
+    },
+    {
+      "name": "chunk count zero",
+      "type": "screen.frame",
+      "direction": "device-to-server",
+      "why": "A frame is at least one chunk. Zero would make chunkIndex meaningless.",
+      "payload": {
+        "streamId": "3f2a91b0-5c41-4d8e-9a77-1b0c2d3e4f50",
+        "sequence": 0,
+        "chunkIndex": 0,
+        "chunkCount": 0,
+        "keyFrame": true,
+        "timestampUs": 0,
+        "data": "AAAAAWVIgA=="
+      }
+    },
+    {
+      "name": "negative sequence",
+      "type": "screen.frame",
+      "direction": "device-to-server",
+      "why": "Sequences start at 0 and rise.",
+      "payload": {
+        "streamId": "3f2a91b0-5c41-4d8e-9a77-1b0c2d3e4f50",
+        "sequence": -1,
+        "chunkIndex": 0,
+        "chunkCount": 1,
+        "keyFrame": true,
+        "timestampUs": 0,
+        "data": "AAAAAWVIgA=="
+      }
+    },
+    {
+      "name": "resolution above the protocol limit",
+      "type": "screen.started",
+      "direction": "device-to-server",
+      "why": "SCREEN_MAX_DIMENSION is 1280. A device claiming more is broken or lying, and both get the same answer.",
+      "payload": {
+        "streamId": "3f2a91b0-5c41-4d8e-9a77-1b0c2d3e4f50",
+        "width": 2160,
+        "height": 3840,
+        "codec": "avc1.42E01E",
+        "fps": 15,
+        "config": "AAAAAWc="
+      }
+    },
+    {
+      "name": "frame rate above the protocol limit",
+      "type": "screen.started",
+      "direction": "device-to-server",
+      "why": "SCREEN_MAX_FPS is 15.",
+      "payload": {
+        "streamId": "3f2a91b0-5c41-4d8e-9a77-1b0c2d3e4f50",
+        "width": 720,
+        "height": 1280,
+        "codec": "avc1.42E01E",
+        "fps": 60,
+        "config": "AAAAAWc="
+      }
+    },
+    {
+      "name": "codec string with a space",
+      "type": "screen.started",
+      "direction": "device-to-server",
+      "why": "The codec string goes into a browser decoder configuration; it is not free text.",
+      "payload": {
+        "streamId": "3f2a91b0-5c41-4d8e-9a77-1b0c2d3e4f50",
+        "width": 720,
+        "height": 1280,
+        "codec": "avc1 baseline",
+        "fps": 15,
+        "config": "AAAAAWc="
+      }
+    },
+    {
+      "name": "consent state nobody defined",
+      "type": "screen.consent",
+      "direction": "device-to-server",
+      "why": "Consent is yes, no, or still being asked. There is no fourth answer.",
+      "payload": {
+        "streamId": "3f2a91b0-5c41-4d8e-9a77-1b0c2d3e4f50",
+        "state": "maybe"
+      }
+    },
+    {
+      "name": "stream id that is not a uuid",
+      "type": "screen.keyframe.request",
+      "direction": "server-to-device",
+      "why": "An opaque id still has a shape, and accepting anything invites an id that means something elsewhere.",
+      "payload": {
+        "streamId": "../../etc/passwd"
+      }
+    }
+  ]
+}

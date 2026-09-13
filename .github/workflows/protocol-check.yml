@@ -48,3 +48,6 @@ jobs:
 
       - name: Protokollkonstanten vergleichen
         run: node tools/validators/check-protocol-constants.mjs
+
+      - name: Fixture-Abdeckung pruefen
+        run: node tools/validators/check-protocol-fixtures.mjs

@@ -148,9 +148,17 @@ Geraetetest.
   File System Access API kann der Browser nicht auf die Platte streamen. Bei 256 MB - dem
   Protokollmaximum - ist das spuerbar. `FEEDBACK_FILE_MAX_DOWNLOAD_BYTES` ist deshalb auch eine
   Schutzgrenze fuer die Bedienoberflaeche, nicht nur fuer den Server.
-- **Kein Integrationstest ueber die drei Implementierungen hinweg.** Android, Server und Control
-  Web werden je fuer sich getestet; dass die kanonischen Payloads und Feldnamen wirklich
-  zusammenpassen, prueft bisher nur ein Mensch.
+- **Kein Integrationstest ueber die drei Implementierungen hinweg** - teilweise geschlossen.
+  `protocol/fixtures/screen-v1.json` enthaelt kanonische Frames, die **beide** Seiten lesen:
+  `server/test/protocol/fixtures.test.ts` prueft sie gegen genau die zod-Schemata, die der Server
+  benutzt, und `ScreenFixtureTest.kt` faehrt den echten Android-Handler damit und vergleicht Feld
+  fuer Feld, was er erzeugt. `tools/validators/check-protocol-fixtures.mjs` laesst CI fehlschlagen,
+  wenn ein in Abschnitt 7.1 deklarierter `screen.*`-Typ kein Beispiel hat.
+
+  Offen: dasselbe fuer `files.*`, `media.*` und `system.info`. Die Mechanik steht, es fehlen die
+  Fixtures - `COVERED_PREFIXES` im Validator ist die Stelle, an der die Abdeckung waechst. Und
+  ein echter Ende-zu-Ende-Lauf ueber eine echte WebSocket-Verbindung ersetzt das nicht; er fehlt
+  weiterhin.
 
 ## 5. Was Hardware braucht
 
