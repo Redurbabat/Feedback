@@ -659,7 +659,7 @@ function card(titleValue: string, subtitle: string): {
 function labeledInput(
   labelValue: string,
   type: string,
-  autocomplete: string,
+  autocomplete: HTMLInputElement['autocomplete'],
   placeholder: string,
 ): { wrapper: HTMLLabelElement; input: HTMLInputElement } {
   const wrapper = document.createElement('label');
