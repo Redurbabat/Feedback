@@ -40,9 +40,10 @@
 - [x] Live-Systeminformationen ueber kurzlebige Remote-Session
 - [x] Akku/Speicher/OS/Netzwerktyp
 - [x] getrennte Server- und lokale Freigabe fuer `system.info`
-- [ ] explizit freigegebene Dateien
+- [~] explizit freigegebene Dateien: Protokoll und Android-Seite implementiert und unit-getestet,
+      aber noch **ohne Freigabe-Oberflaeche**, ohne Server- und ohne Control-Web-Seite
 - [ ] Fotos/Videos ueber Android APIs
-- [ ] Transfer-Limits und Backpressure fuer Datei-/Medientransfer
+- [~] Transfer-Limits und Backpressure: geraeteseitig implementiert und getestet, serverseitig offen
 - [x] Audit-Ereignisse fuer Pairing, Freigaben, Systeminfo und Widerruf
 
 ## Phase 4 - Bildschirm
@@ -70,11 +71,19 @@
 - [ ] Dateien und Systeminformationen
 - [ ] Installer und Updates
 
+## Offene Arbeit
+
+`docs/roadmap/OPEN_WORK.md` benennt im Detail, was noch fehlt, welche technischen Schulden offen
+sind und was nur auf echter Hardware pruefbar ist. Ein `[~]` oben heisst: begonnen, aber nach der
+Definition of Done **nicht** fertig.
+
 ## Testabdeckung
 
 Automatisiert: Unit-Tests fuer Protokoll, Pairing-Payloads, Kryptografie-Hilfen, App-Lock-Policy,
-Lockout-Arithmetik, Auto-Lock, Re-Auth-Fenster und Countdown-Formatierung. CI baut zusaetzlich
-Lint und die Debug-APK.
+Lockout-Arithmetik, Auto-Lock, Re-Auth-Fenster, Countdown-Formatierung, QR-Payload und
+-Kodierung sowie die komplette `files.read`-Geraeteseite (Eintragsregeln, opake IDs, Cursor,
+Chunking, Sendefenster, Sequenzregeln, Limits und Fehlerpfade). CI baut zusaetzlich Lint und die
+Debug-APK.
 
 Nicht automatisiert: alles, was echte Hardware braucht. Der Plan dafuer steht in
 `docs/testing/ANDROID_DEVICE_MATRIX.md` und ist vollstaendig als
