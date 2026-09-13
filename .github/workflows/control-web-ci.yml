@@ -1,0 +1,51 @@
+# Laeuft, sobald control-web/ existiert. Der Pfadfilter nennt bewusst NUR
+# control-web/**: sonst wuerde bereits das Anlegen dieser Workflow-Datei einen
+# Lauf gegen eine noch nicht vorhandene Komponente ausloesen. Sobald
+# control-web/ steht, wird '.github/workflows/control-web-ci.yml' wieder mit aufgenommen,
+# damit auch Aenderungen am Workflow selbst geprueft werden.
+name: Control Web CI
+
+on:
+  push:
+    paths:
+      - "control-web/**"
+  pull_request:
+    paths:
+      - "control-web/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: control-web-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: control-web
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: control-web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test:run
+
+      - name: Build
+        run: npm run build
