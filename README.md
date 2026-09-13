@@ -35,4 +35,6 @@ Feedback ist fuer eigene bzw. autorisierte Geraete gedacht. Keine versteckte Ueb
 
 ## Status
 
-Phase 0: Repository- und Architekturgrundlage.
+Phase 0 ist abgeschlossen. Die lokale Android-Basis ist aktiv in Arbeit: native Compose-App, Android-Keystore-Geraeteidentitaet, stabile Device-ID/Fingerprint und ein lokal signierter, fuenf Minuten gueltiger Pairing-Nachweis mit sechsstelliger Anzeige sind implementiert. GitHub Actions baut bei Android-Aenderungen eine Debug-APK und veroeffentlicht sie als Build-Artefakt.
+
+Die Serverregistrierung des Pairing-Nachweises, QR-Transport, Control Center und Presence folgen in Phase 2.
