@@ -4,31 +4,26 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import com.redurbabat.feedback.pairing.PairingInvitationFactory
-import com.redurbabat.feedback.security.DeviceIdentityStore
 import com.redurbabat.feedback.ui.FeedbackApp
+import com.redurbabat.feedback.ui.FeedbackController
 
 class MainActivity : ComponentActivity() {
+    private lateinit var controller: FeedbackController
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        val identityStore = DeviceIdentityStore()
-        val identityResult = runCatching {
-            identityStore.loadOrCreate()
-        }
-        val pairingFactory = PairingInvitationFactory(identityStore)
-
+        controller = FeedbackController(applicationContext)
         setContent {
-            FeedbackApp(
-                identity = identityResult.getOrNull(),
-                identityAvailable = identityResult.isSuccess,
-                onCreatePairingInvitation = {
-                    val identity = identityResult.getOrNull()
-                        ?: error("Device identity unavailable")
-                    pairingFactory.create(identity)
-                },
-            )
+            FeedbackApp(controller)
         }
+    }
+
+    override fun onDestroy() {
+        if (::controller.isInitialized) {
+            controller.close()
+        }
+        super.onDestroy()
     }
 }
