@@ -18,6 +18,17 @@ enum class MessageType(
     CAPABILITY_UPDATE("capability.update", false),
     SYSTEM_INFO_REQUEST("system.info.request", true),
     SYSTEM_INFO_RESPONSE("system.info.response", true),
+    FILES_SHARES_REQUEST("files.shares.request", true),
+    FILES_SHARES_RESPONSE("files.shares.response", true),
+    FILES_LIST_REQUEST("files.list.request", true),
+    FILES_LIST_RESPONSE("files.list.response", true),
+    FILES_METADATA_REQUEST("files.metadata.request", true),
+    FILES_METADATA_RESPONSE("files.metadata.response", true),
+    FILES_DOWNLOAD_START("files.download.start", true),
+    FILES_DOWNLOAD_CHUNK("files.download.chunk", true),
+    FILES_DOWNLOAD_ACK("files.download.ack", true),
+    FILES_DOWNLOAD_COMPLETE("files.download.complete", true),
+    FILES_DOWNLOAD_CANCEL("files.download.cancel", true),
     DEVICE_REVOKED("device.revoked", false),
     ERROR("error", false);
 

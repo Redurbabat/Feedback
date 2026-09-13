@@ -16,6 +16,16 @@ object ProtocolConstants {
     const val DEVICE_NAME_MAX = 64
     const val PUBLIC_KEY_MAX_BASE64 = 512
 
+    /** `files.read` limits from section 11. */
+    const val FILES_SESSION_TTL_MS = 300_000L
+    const val FILE_CHUNK_BYTES = 32_768
+    const val FILE_TRANSFER_WINDOW = 4
+    const val FILE_MAX_CONCURRENT_TRANSFERS = 2
+    const val FILE_TRANSFER_IDLE_TIMEOUT_MS = 30_000L
+    const val FILE_MAX_DOWNLOAD_BYTES = 268_435_456L
+    const val FILE_MAX_LIST_ENTRIES = 200
+    const val FILE_NAME_MAX = 255
+
     /** Secret sizes from section 5.2 and the nonce size from the pairing/start example. */
     const val PAIRING_NONCE_BYTES = 18
     const val TICKET_BYTES = 32
