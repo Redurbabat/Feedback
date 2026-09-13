@@ -2,6 +2,8 @@ package com.redurbabat.feedback.ui
 
 import android.content.Context
 import com.redurbabat.feedback.agent.AgentConnectionState
+import com.redurbabat.feedback.agent.BackgroundAgentService
+import com.redurbabat.feedback.agent.BackgroundConnectionStore
 import com.redurbabat.feedback.agent.DeviceAgentClient
 import com.redurbabat.feedback.device.SystemInfoProvider
 import com.redurbabat.feedback.network.FeedbackHttpException
@@ -55,15 +57,18 @@ data class FeedbackUiState(
     val pairedPublicDeviceId: String? = null,
     val pairedAt: String? = null,
     val agentState: AgentConnectionState = AgentConnectionState.STOPPED,
+    val backgroundConnectionEnabled: Boolean = false,
     val systemInfoGrantedLocally: Boolean = false,
     val globalMessage: String? = null,
 )
 
 /**
- * Activity-lifetime coordinator for the visible Android app.
+ * Coordinator for the visible Android app.
  *
  * Pairing secrets and the device token never enter [FeedbackUiState]. The token is persisted only
  * through [DeviceRegistrationStore], which seals the complete registration with Android Keystore.
+ * A persistent connection is opt-in and handed to [BackgroundAgentService], which is a visible
+ * foreground service with an ongoing notification and user-accessible stop action.
  */
 class FeedbackController(context: Context) {
     private val applicationContext = context.applicationContext
@@ -72,6 +77,7 @@ class FeedbackController(context: Context) {
     private val secretStore = SecretStore(applicationContext)
     private val registrationStore = DeviceRegistrationStore(secretStore)
     private val localCapabilityStore = LocalCapabilityStore(applicationContext)
+    private val backgroundStore = BackgroundConnectionStore(applicationContext)
     private val metadata = AndroidDeviceMetadataProvider.current()
     private val systemInfoProvider = SystemInfoProvider(applicationContext)
 
@@ -167,7 +173,11 @@ class FeedbackController(context: Context) {
             localCapabilityStore.setGranted(Capability.SYSTEM_INFO, granted)
         }.onSuccess {
             _state.value = _state.value.copy(systemInfoGrantedLocally = granted)
-            agent?.notifyCapabilitiesChanged()
+            if (_state.value.backgroundConnectionEnabled) {
+                BackgroundAgentService.notifyCapabilitiesChanged()
+            } else {
+                agent?.notifyCapabilitiesChanged()
+            }
         }.onFailure {
             _state.value = _state.value.copy(
                 globalMessage = "Die lokale Freigabe konnte nicht gespeichert werden.",
@@ -175,11 +185,71 @@ class FeedbackController(context: Context) {
         }
     }
 
+    fun setBackgroundConnectionEnabled(enabled: Boolean) {
+        if (!_state.value.paired || closed.get()) {
+            return
+        }
+        if (enabled == _state.value.backgroundConnectionEnabled) {
+            return
+        }
+
+        val stored = runCatching { registrationStore.load() }.getOrNull()
+        if (stored == null) {
+            _state.value = _state.value.copy(
+                paired = false,
+                backgroundConnectionEnabled = false,
+                globalMessage = "Keine gültige lokale Registrierung gefunden. Bitte erneut koppeln.",
+            )
+            return
+        }
+
+        if (enabled) {
+            agentStateJob?.cancel()
+            agentStateJob = null
+            agent?.stop()
+            agent = null
+            try {
+                BackgroundAgentService.start(applicationContext)
+                _state.value = _state.value.copy(
+                    backgroundConnectionEnabled = true,
+                    agentState = AgentConnectionState.CONNECTING,
+                    globalMessage = "Hintergrundverbindung aktiviert. Android zeigt dafür eine dauerhafte Benachrichtigung.",
+                )
+                observeBackgroundAgent()
+            } catch (_: Exception) {
+                backgroundStore.setEnabled(false)
+                _state.value = _state.value.copy(
+                    backgroundConnectionEnabled = false,
+                    globalMessage = "Die Hintergrundverbindung konnte von Android nicht gestartet werden.",
+                )
+                startAgent(stored)
+            }
+        } else {
+            BackgroundAgentService.stop(applicationContext)
+            _state.value = _state.value.copy(
+                backgroundConnectionEnabled = false,
+                globalMessage = "Hintergrundverbindung beendet. Solange die App geöffnet ist, bleibt der Agent verbunden.",
+            )
+            startAgent(stored)
+        }
+    }
+
+    fun reportBackgroundNotificationPermissionDenied() {
+        _state.value = _state.value.copy(
+            backgroundConnectionEnabled = false,
+            globalMessage = "Für die sichtbare Hintergrundverbindung sind Benachrichtigungen erforderlich. Die Verbindung wurde nicht aktiviert.",
+        )
+    }
+
     fun reconnectAgent() {
         if (!_state.value.paired || closed.get()) {
             return
         }
-        agent?.start()
+        if (_state.value.backgroundConnectionEnabled) {
+            BackgroundAgentService.reconnect()
+        } else {
+            agent?.start()
+        }
     }
 
     /**
@@ -191,6 +261,8 @@ class FeedbackController(context: Context) {
         pairingJob = null
         agentStateJob?.cancel()
         agentStateJob = null
+        BackgroundAgentService.stop(applicationContext)
+        backgroundStore.setEnabled(false)
         agent?.stop()
         agent = null
         registrationStore.clear()
@@ -203,6 +275,7 @@ class FeedbackController(context: Context) {
             pairedPublicDeviceId = null,
             pairedAt = null,
             agentState = AgentConnectionState.STOPPED,
+            backgroundConnectionEnabled = false,
             systemInfoGrantedLocally = false,
             globalMessage = "Lokale Kopplung entfernt. Für einen globalen Widerruf das Control Center verwenden.",
         )
@@ -226,6 +299,7 @@ class FeedbackController(context: Context) {
     private fun initialize() {
         val identity = runCatching { identityStore.loadOrCreate() }.getOrNull()
         val stored = runCatching { registrationStore.load() }.getOrNull()
+        val backgroundEnabled = stored != null && backgroundStore.isEnabled()
         _state.value = FeedbackUiState(
             identity = identity,
             identityAvailable = identity != null,
@@ -235,6 +309,7 @@ class FeedbackController(context: Context) {
             pairedServer = stored?.endpoint?.baseUrl,
             pairedPublicDeviceId = stored?.registration?.publicDeviceId,
             pairedAt = stored?.registration?.pairedAt,
+            backgroundConnectionEnabled = backgroundEnabled,
             systemInfoGrantedLocally = localCapabilityStore.granted().contains(Capability.SYSTEM_INFO),
             globalMessage = if (identity == null) {
                 "Die Geräteidentität konnte nicht aus dem Android Keystore geladen werden."
@@ -243,7 +318,21 @@ class FeedbackController(context: Context) {
             },
         )
         if (stored != null) {
-            startAgent(stored)
+            if (backgroundEnabled) {
+                try {
+                    BackgroundAgentService.start(applicationContext)
+                    observeBackgroundAgent()
+                } catch (_: Exception) {
+                    backgroundStore.setEnabled(false)
+                    _state.value = _state.value.copy(
+                        backgroundConnectionEnabled = false,
+                        globalMessage = "Die gespeicherte Hintergrundverbindung konnte nicht gestartet werden. Der Agent läuft nur solange die App geöffnet ist.",
+                    )
+                    startAgent(stored)
+                }
+            } else {
+                startAgent(stored)
+            }
         }
     }
 
@@ -289,8 +378,10 @@ class FeedbackController(context: Context) {
                         pairedServer = endpoint.baseUrl,
                         pairedPublicDeviceId = registration.publicDeviceId,
                         pairedAt = registration.pairedAt,
+                        backgroundConnectionEnabled = false,
                         globalMessage = "Gerät erfolgreich gekoppelt.",
                     )
+                    backgroundStore.setEnabled(false)
                     startAgent(stored)
                     return
                 }
@@ -334,27 +425,57 @@ class FeedbackController(context: Context) {
         agent = next
         agentStateJob = scope.launch {
             next.state.collect { connectionState ->
-                if (closed.get()) {
-                    return@collect
-                }
-                if (connectionState == AgentConnectionState.REVOKED) {
-                    localCapabilityStore.clear()
-                    _state.value = _state.value.copy(
-                        paired = false,
-                        pairedDeviceName = null,
-                        pairedServer = null,
-                        pairedPublicDeviceId = null,
-                        pairedAt = null,
-                        agentState = connectionState,
-                        systemInfoGrantedLocally = false,
-                        globalMessage = "Dieses Gerät wurde im Control Center widerrufen.",
-                    )
-                } else {
-                    _state.value = _state.value.copy(agentState = connectionState)
-                }
+                applyAgentState(connectionState)
             }
         }
         next.start()
+    }
+
+    private fun observeBackgroundAgent() {
+        agentStateJob?.cancel()
+        agentStateJob = scope.launch {
+            BackgroundAgentService.state.collect { connectionState ->
+                if (closed.get()) {
+                    return@collect
+                }
+                if (
+                    connectionState == AgentConnectionState.STOPPED &&
+                    _state.value.backgroundConnectionEnabled &&
+                    !backgroundStore.isEnabled()
+                ) {
+                    _state.value = _state.value.copy(backgroundConnectionEnabled = false)
+                    val stored = runCatching { registrationStore.load() }.getOrNull()
+                    if (stored != null) {
+                        startAgent(stored)
+                    }
+                    return@collect
+                }
+                applyAgentState(connectionState)
+            }
+        }
+    }
+
+    private fun applyAgentState(connectionState: AgentConnectionState) {
+        if (closed.get()) {
+            return
+        }
+        if (connectionState == AgentConnectionState.REVOKED) {
+            backgroundStore.setEnabled(false)
+            localCapabilityStore.clear()
+            _state.value = _state.value.copy(
+                paired = false,
+                pairedDeviceName = null,
+                pairedServer = null,
+                pairedPublicDeviceId = null,
+                pairedAt = null,
+                agentState = connectionState,
+                backgroundConnectionEnabled = false,
+                systemInfoGrantedLocally = false,
+                globalMessage = "Dieses Gerät wurde im Control Center widerrufen.",
+            )
+        } else {
+            _state.value = _state.value.copy(agentState = connectionState)
+        }
     }
 
     private fun failPairing(error: Exception) {
