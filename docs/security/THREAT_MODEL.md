@@ -319,31 +319,53 @@ Ungeloest, nach Nutzen sortiert:
 6. **Keine Ende-zu-Ende-Verschluesselung der Inhalte** gegenueber dem Serverbetreiber - weder fuer
    Dateien noch fuer Bildframes (4.15). Das ist der groesste offene Punkt der Liste und der
    einzige, dessen Loesung neue Kryptografie braucht statt nur Sorgfalt.
+7. **Kein Schutz fremder Oberflaechen gegen Remote-Input**, falls `screen.control` je gebaut wird
+   (Abschnitt 7 und ADR-005). Fuer Feedbacks eigene Bildschirme gibt es eine Massnahme, fuer die
+   aller anderen Apps nicht.
 
-## 7. Was vor Milestone 6 zu ergaenzen ist
+## 7. Was vor Milestone 6 zu ergaenzen ist - beantwortet
 
-Die vier Fragen, die hier vor Milestone 5 standen, sind beantwortet und in 4.15 bis 4.18
-eingearbeitet - einschliesslich der unbequemen Antwort, dass die Strecke nicht
-Ende-zu-Ende-verschluesselt ist und unsere eigene Benachrichtigung nicht unumgehbar.
+Die vier Fragen, die hier standen, sind beantwortet. Die Antworten stehen in
+`docs/decisions/ADR-005-remote-input.md`; hier die Kurzfassung, weil sie unbequem ist.
 
-Milestone 6 ist `screen.control`, und das ist die groessere Verschiebung: bis hierhin kann
-Feedback lesen und zusehen, danach kann es **handeln**. Bevor ein Eingabekanal implementiert wird,
-gehoert hier hinein:
+**Was ein Eingabeereignis ausloesen kann, das der Besitzer nicht will.** Alles, was ein Finger
+kann: eine Bestaetigung in einer Banking-App, die Annahme einer Berechtigungsabfrage, das
+Deaktivieren von Feedbacks eigener App-Sperre, die Bestaetigung einer neuen Kopplung. Der Angriff
+auf den eigenen Widerrufspfad ist der wichtigste, und er ist der einzige, gegen den wir selbst
+etwas tun koennen: keine Geste, solange eine sensible eigene Oberflaeche im Vordergrund ist
+(ADR-005, Bedingung 4). Ausserhalb von Feedback gibt es keine solche Schutzzone.
 
-- Was ein Eingabeereignis ausloesen kann, das der Besitzer nicht will: eine Bestaetigung in einer
-  Banking-App, die Annahme einer Berechtigungsanfrage, das Deaktivieren von Feedbacks eigener
-  App-Sperre. Ein Klick auf den eigenen Widerrufspfad ist der Angriff, gegen den ein
-  Fernsteuerungsprotokoll sich selbst schuetzen muss.
-- Wie ein Eingabekanal ohne AccessibilityService oder Root ueberhaupt umgesetzt werden soll - und
-  falls er einen AccessibilityService braucht: was dieser Dienst sonst noch kann und warum das
-  vertretbar waere. Ein Accessibility-Dienst liest jeden Bildschirminhalt jeder App.
-- Warum ein uebernommener Eingabekanal etwas anderes ist als ein uebernommener Bildstrom, und was
-  der Besitzer waehrend einer laufenden Fernsteuerung sieht und sofort stoppen kann.
-- Ob Eingabe eine eigene, getrennte Zustimmung pro Sitzung braucht - und ob sie nur bei sichtbarem
-  Bildschirm gelten darf.
+**Ob es ohne AccessibilityService geht: nein.** `INJECT_EVENTS` ist Signaturberechtigung,
+MediaProjection sendet nichts, OEM-Erweiterungen sind herstellersigniert, und `adb shell input`
+waere eine Shell und damit durch die harten Regeln ausgeschlossen. Der Dienst kann von Haus aus
+jeden Bildschirminhalt jeder App lesen.
 
-Vorher gilt unveraendert: `screen.control` ist deklariert, deny-by-default und antwortet
-`UNSUPPORTED`.
+Dagegen gibt es genau eine Massnahme, die die Plattform erzwingt statt wir sie zu versprechen: den
+Dienst **ohne** Inhaltszugriff deklarieren, nur mit `CAPABILITY_CAN_PERFORM_GESTURES`. Dann sind
+Tippen, Wischen und drei globale Aktionen moeglich - und **Texteingabe ist unmoeglich**, weil Text
+einen Knoten braucht und Knoten Inhaltszugriff. Die Deklaration steht in der XML eines signierten
+APK und ist damit nachpruefbar.
+
+**Warum eine uebernommene Steuerung etwas anderes ist als ein uebernommener Bildstrom.** Wer den
+Bildstrom hat, *sieht* die Bestaetigung. Wer die Steuerung hat, *drueckt* sie. Derselbe Angreifer
+aus 4.5 - gestohlene Browser-Sitzung - geht damit von Beobachten zu Handeln ueber, und der
+Besitzer merkt es nur, solange er hinsieht.
+
+**Ob Eingabe eine eigene Zustimmung braucht: ja, und mehr.** Eigene Zustimmung pro Sitzung, nur
+innerhalb eines laufenden und sichtbaren Bildstroms, harte kurze Sitzung ohne Verlaengerung,
+lokaler Stop ohne Umweg ueber den Server, sofortiges Ende bei Verbindungsverlust.
+
+**Empfehlung dieses Dokuments: nicht bauen, solange kein Bedarf benannt ist, den `screen.view`
+nicht deckt.** Der Weg ist in ADR-005 beschrieben und die Bedingungen stehen fest; was fehlt, ist
+die Antwort auf "wofuer". Bis dahin bleibt `screen.control` deklariert, deny-by-default und
+antwortet `UNSUPPORTED`.
+
+Was **stattdessen** zuerst ansteht, weil es bestehende Zusagen betrifft statt neue zu machen:
+
+- Ein Lauf gegen echte Hardware nach `docs/deployment/BETRIEB.md` 3.4 und 3.5. Ohne ihn sind
+  4.16 und 4.17 Behauptungen.
+- Milestone 7: Fuzzing der Protokollparser, Dependency-Audit, Batterie-Review.
+- Die offenen Punkte aus Abschnitt 6, vor allem Nummer 6.
 
 ## 8. Abnahme
 

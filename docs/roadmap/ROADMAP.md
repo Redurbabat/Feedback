@@ -58,7 +58,10 @@
 
 ## Phase 5 - Fernsteuerung
 
-- [ ] Plattformgrenzen dokumentieren
+- [x] Plattformgrenzen dokumentieren (ADR-005, Threat Model Abschnitt 7) - mit dem Ergebnis,
+      dass Remote-Input auf Android ohne AccessibilityService nicht geht und die Empfehlung
+      lautet, `screen.control` erst zu bauen, wenn ein Bedarf benannt ist, den `screen.view`
+      nicht deckt
 - [ ] lokale explizite Aktivierung
 - [ ] Input-Protokoll
 - [ ] sichtbarer Stop-Mechanismus
