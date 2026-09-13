@@ -59,8 +59,15 @@ describe('password hashing', () => {
     const password = randomPassword();
     const record = await hashPassword(password, TEST_PARAMETERS);
     const parts = record.split('$');
-    const hash = Buffer.from(parts[3] as string, 'base64url');
-    hash[0] ^= 0x01;
+    const encodedHash = parts.at(3);
+    expect(encodedHash).toBeDefined();
+    if (!encodedHash) {
+      throw new Error('Expected encoded password hash');
+    }
+
+    const hash = Buffer.from(encodedHash, 'base64url');
+    expect(hash.length).toBeGreaterThan(0);
+    hash.writeUInt8(hash.readUInt8(0) ^ 0x01, 0);
     parts[3] = hash.toString('base64url');
 
     expect(await verifyPassword(password, parts.join('$'))).toBe(false);
