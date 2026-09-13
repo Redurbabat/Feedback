@@ -1,0 +1,53 @@
+name: Protocol Check
+
+# Vergleicht die drei Implementierungen mit protocol/PROTOCOL.md. Braucht keine
+# Abhaengigkeiten: reines Node, deshalb laeuft der Job in Sekunden und kann bei
+# jeder Aenderung an einer der beteiligten Seiten mitlaufen.
+#
+# Der Validator bricht hart ab, wenn eine seiner Eingabedateien fehlt oder ein
+# Abschnitt nicht mehr lesbar ist. Ein Waechter, der still gruen wird, weil seine
+# Eingabe verschwunden ist, ist schlechter als gar keiner.
+
+on:
+  push:
+    paths:
+      - "protocol/**"
+      - "android/app/src/main/java/com/redurbabat/feedback/protocol/**"
+      - "server/src/constants.ts"
+      - "server/src/errors.ts"
+      - "tools/validators/**"
+      - ".github/workflows/protocol-check.yml"
+  pull_request:
+    paths:
+      - "protocol/**"
+      - "android/app/src/main/java/com/redurbabat/feedback/protocol/**"
+      - "server/src/constants.ts"
+      - "server/src/errors.ts"
+      - "tools/validators/**"
+      - ".github/workflows/protocol-check.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: protocol-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  constants:
+    name: Konstanten, Capabilities und Fehlercodes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Protokollkonstanten vergleichen
+        run: node tools/validators/check-protocol-constants.mjs
+
+      - name: Fixture-Abdeckung pruefen
+        run: node tools/validators/check-protocol-fixtures.mjs

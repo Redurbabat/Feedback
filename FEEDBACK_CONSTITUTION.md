@@ -60,3 +60,21 @@ Eine Phase ist erst fertig, wenn Build und relevante Tests erfolgreich sind. Sic
 ## 12. Kein stilles Downgrade
 
 Fehlt eine sichere API oder Unterstuetzung auf einem alten Geraet, wird die Funktion als nicht verfuegbar angezeigt. Es gibt keinen unsicheren Fallback.
+
+## 13. Internet-first
+
+Feedback verbindet Geraete ueber das Internet, nicht ueber ein gemeinsames Netzwerk. Kein Feature
+darf voraussetzen, dass Control Center und Zielgeraet im selben LAN oder WLAN sind.
+
+- Geraet und Control Center haben keine Verbindung zueinander. Beide bauen jeweils eine ausgehende
+  TLS-Verbindung zum Control Server auf. Damit funktioniert Feedback ueber Mobilfunk, hinter NAT
+  und ohne Portfreigabe.
+- Keine Netzwerk-Discovery: kein mDNS/NSD, kein Subnetz-Scan, keine Annahme ueber private
+  IP-Bereiche, keine Kopplung ueber "beide im selben WLAN".
+- Eine direkte Peer-Verbindung ist eine Optimierung der
+  Latenz, niemals die Voraussetzung der Funktion. Kommt sie nicht zustande, muss ein Relay
+  uebernehmen. Ein Feature, das nur im selben Netz funktioniert, gilt als nicht implementiert.
+  In v1 gibt es deshalb gar keine Peer-Strecke: auch der Bildschirmstrom laeuft ueber den Control
+  Server (ADR-004).
+- Cleartext-Abkuerzungen "weil es ja nur das Heimnetz ist" sind ausgeschlossen. Es gibt kein
+  vertrauenswuerdiges Netz.

@@ -1,0 +1,48 @@
+name: Control Web CI
+
+on:
+  push:
+    paths:
+      - "control-web/**"
+      - ".github/workflows/control-web-ci.yml"
+  pull_request:
+    paths:
+      - "control-web/**"
+      - ".github/workflows/control-web-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: control-web-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: control-web
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: control-web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test:run
+
+      - name: Build
+        run: npm run build

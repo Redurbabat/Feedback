@@ -1,0 +1,311 @@
+{
+  "version": 1,
+  "section": "8.3",
+  "note": [
+    "Canonical files.read frames, read by both implementations - see screen-v1.json for why.",
+    "The ids are opaque base64url by construction: no path, no content URI, nothing that could",
+    "be reconstructed into a file system location (protocol section 8.3.2).",
+    "Media areas use the same messages and differ only in the capability that governs them",
+    "(section 8.4), so media.photos.read and media.videos.read appear here as share capabilities",
+    "rather than as message types of their own."
+  ],
+  "accepted": [
+    {
+      "name": "list the shared areas",
+      "type": "files.shares.request",
+      "direction": "server-to-device",
+      "payload": {}
+    },
+    {
+      "name": "one area of each kind",
+      "type": "files.shares.response",
+      "direction": "device-to-server",
+      "payload": {
+        "shares": [
+          {
+            "shareId": "c2hhcmUtdHJlZS0x",
+            "displayName": "Documents",
+            "kind": "tree",
+            "capability": "files.read",
+            "addedAt": "2026-09-13T09:12:00.000Z"
+          },
+          {
+            "shareId": "c2hhcmUtZmlsZS0x",
+            "displayName": "Rechnung.pdf",
+            "kind": "file",
+            "capability": "files.read",
+            "addedAt": "2026-09-13T09:13:00.000Z"
+          },
+          {
+            "shareId": "c2hhcmUtcGhvdG9zLTE",
+            "displayName": "12 Bilder",
+            "kind": "collection",
+            "capability": "media.photos.read",
+            "addedAt": "2026-09-13T09:14:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "name": "list the root of a share",
+      "type": "files.list.request",
+      "direction": "server-to-device",
+      "payload": {
+        "shareId": "c2hhcmUtdHJlZS0x"
+      }
+    },
+    {
+      "name": "list a subdirectory with paging",
+      "type": "files.list.request",
+      "direction": "server-to-device",
+      "payload": {
+        "shareId": "c2hhcmUtdHJlZS0x",
+        "directoryId": "ZGlyLTAwMDE",
+        "cursor": "Y3Vyc29yLTI",
+        "limit": 50
+      }
+    },
+    {
+      "name": "a folder and a file, with another page to come",
+      "type": "files.list.response",
+      "direction": "device-to-server",
+      "payload": {
+        "shareId": "c2hhcmUtdHJlZS0x",
+        "entries": [
+          {
+            "id": "ZGlyLTAwMDE",
+            "name": "Rechnungen",
+            "mimeType": "vnd.android.document/directory",
+            "size": null,
+            "modifiedAt": "2026-09-12T18:00:00.000Z",
+            "kind": "directory"
+          },
+          {
+            "id": "ZmlsZS0wMDAx",
+            "name": "Rechnung.pdf",
+            "mimeType": "application/pdf",
+            "size": 182734,
+            "modifiedAt": "2026-09-13T09:12:00.000Z",
+            "kind": "file"
+          }
+        ],
+        "nextCursor": "Y3Vyc29yLTM"
+      }
+    },
+    {
+      "name": "ask about one file",
+      "type": "files.metadata.request",
+      "direction": "server-to-device",
+      "payload": {
+        "shareId": "c2hhcmUtdHJlZS0x",
+        "fileId": "ZmlsZS0wMDAx"
+      }
+    },
+    {
+      "name": "one file, with the modification time Android did not supply",
+      "type": "files.metadata.response",
+      "direction": "device-to-server",
+      "payload": {
+        "entry": {
+          "id": "ZmlsZS0wMDAx",
+          "name": "Rechnung.pdf",
+          "mimeType": "application/pdf",
+          "size": 182734,
+          "modifiedAt": null,
+          "kind": "file"
+        }
+      }
+    },
+    {
+      "name": "start a download",
+      "type": "files.download.start",
+      "direction": "server-to-device",
+      "payload": {
+        "transferId": "a1c47d92-3b05-4f6e-8c21-9d0e5f6a7b80",
+        "shareId": "c2hhcmUtdHJlZS0x",
+        "fileId": "ZmlsZS0wMDAx"
+      }
+    },
+    {
+      "name": "the first chunk",
+      "type": "files.download.chunk",
+      "direction": "device-to-server",
+      "payload": {
+        "transferId": "a1c47d92-3b05-4f6e-8c21-9d0e5f6a7b80",
+        "sequence": 0,
+        "data": "JVBERi0xLjQK",
+        "last": false
+      }
+    },
+    {
+      "name": "the final chunk",
+      "type": "files.download.chunk",
+      "direction": "device-to-server",
+      "payload": {
+        "transferId": "a1c47d92-3b05-4f6e-8c21-9d0e5f6a7b80",
+        "sequence": 1,
+        "data": "JSVFT0YK",
+        "last": true
+      }
+    },
+    {
+      "name": "acknowledge a chunk",
+      "type": "files.download.ack",
+      "direction": "server-to-device",
+      "payload": {
+        "transferId": "a1c47d92-3b05-4f6e-8c21-9d0e5f6a7b80",
+        "sequence": 0
+      }
+    },
+    {
+      "name": "the whole file, with its digest",
+      "type": "files.download.complete",
+      "direction": "device-to-server",
+      "payload": {
+        "transferId": "a1c47d92-3b05-4f6e-8c21-9d0e5f6a7b80",
+        "totalBytes": 14,
+        "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+      }
+    },
+    {
+      "name": "the viewer gave up",
+      "type": "files.download.cancel",
+      "direction": "server-to-device",
+      "payload": {
+        "transferId": "a1c47d92-3b05-4f6e-8c21-9d0e5f6a7b80",
+        "reason": "client_cancelled"
+      }
+    },
+    {
+      "name": "the device could not read on",
+      "type": "files.download.cancel",
+      "direction": "device-to-server",
+      "payload": {
+        "transferId": "a1c47d92-3b05-4f6e-8c21-9d0e5f6a7b80",
+        "reason": "read_error"
+      }
+    }
+  ],
+  "rejected": [
+    {
+      "name": "a name with a path component",
+      "type": "files.metadata.response",
+      "direction": "device-to-server",
+      "why": "Section 8.3.3: a path in a display name is the classic route to a traversal on the receiving side, so the entry is refused rather than repaired.",
+      "payload": {
+        "entry": {
+          "id": "ZmlsZS0wMDAx",
+          "name": "../../etc/passwd",
+          "mimeType": "text/plain",
+          "size": 12,
+          "modifiedAt": null,
+          "kind": "file"
+        }
+      }
+    },
+    {
+      "name": "a name with a control character",
+      "type": "files.metadata.response",
+      "direction": "device-to-server",
+      "why": "A newline in a file name is a display and logging problem on every receiving side.",
+      "payload": {
+        "entry": {
+          "id": "ZmlsZS0wMDAx",
+          "name": "Rechnung\npdf",
+          "mimeType": "application/pdf",
+          "size": 1,
+          "modifiedAt": null,
+          "kind": "file"
+        }
+      }
+    },
+    {
+      "name": "a share governed by a capability that governs no area",
+      "type": "files.shares.response",
+      "direction": "device-to-server",
+      "why": "Section 8.3.1: exactly one of files.read, media.photos.read or media.videos.read governs an area. screen.view is not a way into a folder.",
+      "payload": {
+        "shares": [
+          {
+            "shareId": "c2hhcmUtdHJlZS0x",
+            "displayName": "Documents",
+            "kind": "tree",
+            "capability": "screen.view",
+            "addedAt": "2026-09-13T09:12:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a share id that is not opaque",
+      "type": "files.shares.response",
+      "direction": "device-to-server",
+      "why": "Section 8.3.2: an id must not carry or reconstruct a path.",
+      "payload": {
+        "shares": [
+          {
+            "shareId": "/storage/emulated/0/Documents",
+            "displayName": "Documents",
+            "kind": "tree",
+            "capability": "files.read",
+            "addedAt": "2026-09-13T09:12:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a directory that claims a size",
+      "type": "files.list.response",
+      "direction": "device-to-server",
+      "why": "Section 8.3.3 says size is null for a directory. It is written down because a number there would be a guess.",
+      "payload": {
+        "shareId": "c2hhcmUtdHJlZS0x",
+        "entries": [
+          {
+            "id": "ZGlyLTAwMDE",
+            "name": "Rechnungen",
+            "mimeType": "vnd.android.document/directory",
+            "size": "unbekannt",
+            "modifiedAt": null,
+            "kind": "directory"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a digest that is not a digest",
+      "type": "files.download.complete",
+      "direction": "device-to-server",
+      "why": "Buffer.from(..., 'hex') does not throw on bad input, it stops at the first bad pair - so a short digest would arrive as a short buffer and compare against nothing.",
+      "payload": {
+        "transferId": "a1c47d92-3b05-4f6e-8c21-9d0e5f6a7b80",
+        "totalBytes": 14,
+        "sha256": "9f86d0"
+      }
+    },
+    {
+      "name": "a chunk before the beginning",
+      "type": "files.download.chunk",
+      "direction": "device-to-server",
+      "why": "Sequences start at 0 and rise by exactly one.",
+      "payload": {
+        "transferId": "a1c47d92-3b05-4f6e-8c21-9d0e5f6a7b80",
+        "sequence": -1,
+        "data": "JVBERi0xLjQK",
+        "last": false
+      }
+    },
+    {
+      "name": "a transfer id that is not a uuid",
+      "type": "files.download.chunk",
+      "direction": "device-to-server",
+      "why": "The server mints transfer ids as UUIDs; anything else belongs to no transfer it opened.",
+      "payload": {
+        "transferId": "transfer-1",
+        "sequence": 0,
+        "data": "JVBERi0xLjQK",
+        "last": false
+      }
+    }
+  ]
+}

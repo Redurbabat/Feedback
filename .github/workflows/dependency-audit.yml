@@ -1,0 +1,52 @@
+name: Dependency Audit
+
+# Milestone 7. Laeuft woechentlich statt nur bei Aenderungen: eine Schwachstelle wird
+# veroeffentlicht, wenn sie veroeffentlicht wird, nicht wenn jemand hier committet.
+#
+# `npm audit` bricht den Job ab, sobald etwas ab "high" gefunden wird. Das ist Absicht: ein
+# Audit, dessen Ergebnis niemand sieht, ist kein Audit.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  push:
+    paths:
+      - "server/package-lock.json"
+      - "control-web/package-lock.json"
+      - ".github/workflows/dependency-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    strategy:
+      # Ohne fail-fast, damit ein Fund in einem Paket den Bericht des anderen nicht verdeckt.
+      fail-fast: false
+      matrix:
+        workspace: [server, control-web]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ${{ matrix.workspace }}/package-lock.json
+
+      - name: Install
+        working-directory: ${{ matrix.workspace }}
+        run: npm ci --no-audit --no-fund
+
+      - name: Audit
+        working-directory: ${{ matrix.workspace }}
+        run: npm audit --audit-level=high
