@@ -1,5 +1,10 @@
 package com.redurbabat.feedback.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -29,16 +34,44 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.redurbabat.feedback.agent.AgentConnectionState
 import com.redurbabat.feedback.security.DeviceIdentity
 
 @Composable
 fun FeedbackApp(controller: FeedbackController) {
     val state by controller.state.collectAsState()
+    val context = LocalContext.current
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            controller.setBackgroundConnectionEnabled(true)
+        } else {
+            controller.reportBackgroundNotificationPermissionDenied()
+        }
+    }
+
+    val onBackgroundConnectionChanged: (Boolean) -> Unit = { enabled ->
+        if (!enabled) {
+            controller.setBackgroundConnectionEnabled(false)
+        } else if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            controller.setBackgroundConnectionEnabled(true)
+        }
+    }
 
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
@@ -48,6 +81,7 @@ fun FeedbackApp(controller: FeedbackController) {
                 onStartPairing = controller::startPairing,
                 onCancelPairing = controller::cancelPairing,
                 onSystemInfoChanged = controller::setSystemInfoGranted,
+                onBackgroundConnectionChanged = onBackgroundConnectionChanged,
                 onReconnect = controller::reconnectAgent,
                 onForgetLocalRegistration = controller::forgetLocalRegistration,
                 onClearMessage = controller::clearMessage,
@@ -63,6 +97,7 @@ private fun HomeScreen(
     onStartPairing: () -> Unit,
     onCancelPairing: () -> Unit,
     onSystemInfoChanged: (Boolean) -> Unit,
+    onBackgroundConnectionChanged: (Boolean) -> Unit,
     onReconnect: () -> Unit,
     onForgetLocalRegistration: () -> Unit,
     onClearMessage: () -> Unit,
@@ -107,6 +142,10 @@ private fun HomeScreen(
 
         if (state.paired) {
             PairedConnectionCard(state = state, onReconnect = onReconnect)
+            BackgroundConnectionCard(
+                enabled = state.backgroundConnectionEnabled,
+                onEnabledChanged = onBackgroundConnectionChanged,
+            )
             CapabilityCard(
                 systemInfoGranted = state.systemInfoGrantedLocally,
                 onSystemInfoChanged = onSystemInfoChanged,
@@ -336,6 +375,49 @@ private fun PairedConnectionCard(
                     Text("Erneut verbinden")
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun BackgroundConnectionCard(
+    enabled: Boolean,
+    onEnabledChanged: (Boolean) -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(20.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f).padding(end = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                Text(
+                    text = "Hintergrundverbindung",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = if (enabled) {
+                        "Aktiv. Feedback bleibt über einen sichtbaren Android-Vordergrunddienst verbunden. Die dauerhafte Benachrichtigung enthält eine Beenden-Aktion."
+                    } else {
+                        "Aus. Der Agent ist nur erreichbar, solange die App geöffnet ist. Aktivieren ist freiwillig und immer sichtbar."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = enabled,
+                onCheckedChange = onEnabledChanged,
+            )
         }
     }
 }
