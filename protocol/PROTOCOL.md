@@ -266,10 +266,23 @@ Alle zustandsaendernden Anfragen verlangen den Header `X-Feedback-CSRF` mit dem 
   "type": "system.info.request",
   "messageId": "<uuid v4>",
   "sessionId": "<uuid|null>",
+  "relatesTo": "<uuid v4|absent>",
   "timestamp": "2026-09-13T11:22:33.000Z",
   "payload": {}
 }
 ```
+
+`relatesTo` ist die Korrelation auf Nachrichtenebene: **jede Antwort** traegt den `messageId`
+ihrer Anfrage darin. Anfragen lassen das Feld weg.
+
+Es steht bewusst im Envelope und nicht im Payload: es beschreibt die Nachricht, nicht ihren
+Inhalt, genau wie `messageId`. Und es ist bewusst nicht `sessionId`: eine Remote-Session ist der
+Autorisierungsrahmen und traegt mehrere gleichzeitige Anfragen, taugt also nicht als
+Korrelationsschluessel. Wer nach `sessionId` korreliert, verwechselt die zweite Anfragen einer
+Files-Session mit der ersten.
+
+Ein `error` nennt die Bezugsnachricht zusaetzlich in seinem Payload (`relatesTo`), damit ein
+Fehler auch dann zuzuordnen ist, wenn er keine Antwort auf eine gueltige Anfrage ist.
 
 Regeln:
 
@@ -277,6 +290,8 @@ Regeln:
 - Unbekannter `type` ⇒ `UNSUPPORTED`.
 - Fehlende oder ungueltige Felder ⇒ `INVALID_MESSAGE`.
 - `messageId` ist eine UUID v4 und pro Verbindung eindeutig; Wiederholung ⇒ `INVALID_MESSAGE`.
+- `relatesTo` ist, wenn vorhanden, eine UUID v4. Eine Antwort ohne `relatesTo` wird verworfen:
+  sie laesst sich keiner offenen Anfrage zuordnen.
 - `timestamp` ausserhalb `CLOCK_SKEW_MS` ⇒ `INVALID_MESSAGE`.
 - Maximale Rahmengroesse: `MAX_FRAME_BYTES = 65536`.
 - Privilegierte Anfragen ohne `sessionId` ⇒ `SESSION_EXPIRED`.

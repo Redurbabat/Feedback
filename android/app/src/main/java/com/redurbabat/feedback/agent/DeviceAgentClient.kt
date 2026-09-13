@@ -241,6 +241,7 @@ class DeviceAgentClient(
             MessageType.SYSTEM_INFO_RESPONSE,
             envelope.sessionId,
             snapshot.toJson(),
+            relatesTo = envelope.messageId,
         )
     }
 
@@ -294,7 +295,13 @@ class DeviceAgentClient(
         }
 
         when (outcome) {
-            is FilesOutcome.Reply -> sendFileMessage(socket, envelope.sessionId, outcome.message)
+            is FilesOutcome.Reply ->
+                sendFileMessage(
+                    socket,
+                    envelope.sessionId,
+                    outcome.message,
+                    relatesTo = envelope.messageId,
+                )
             is FilesOutcome.Failure ->
                 sendError(socket, envelope.messageId, outcome.error, outcome.message)
 
@@ -321,11 +328,16 @@ class DeviceAgentClient(
         }
     }
 
+    /**
+     * Chunk and cancel frames belong to a transfer and correlate through `transferId` in the
+     * payload, so [relatesTo] is only set for the direct answers to a request.
+     */
     private fun sendFileMessage(
         socket: WebSocket,
         sessionId: String?,
         message: OutgoingFileMessage,
-    ): Boolean = send(socket, message.type, sessionId, message.payload)
+        relatesTo: String? = null,
+    ): Boolean = send(socket, message.type, sessionId, message.payload, relatesTo)
 
     private fun handleRevoked(socket: WebSocket) {
         cancelFileTransfers(socket, FileTransferCancelReason.DEVICE_REVOKED)
@@ -391,11 +403,17 @@ class DeviceAgentClient(
         send(socket, MessageType.ERROR, null, payload)
     }
 
+    /**
+     * [relatesTo] carries the `messageId` of the request being answered (protocol section 7).
+     * Every response must set it: the server correlates on it, and a session id cannot do that job
+     * because one files session has several requests open at the same time.
+     */
     private fun send(
         socket: WebSocket,
         type: MessageType,
         sessionId: String?,
         payload: JSONObject,
+        relatesTo: String? = null,
     ): Boolean {
         val envelope = Envelope.create(
             type = type,
@@ -403,6 +421,7 @@ class DeviceAgentClient(
             sessionId = sessionId,
             timestampEpochMillis = now(),
             payload = payload,
+            relatesTo = relatesTo,
         )
         val sent = socket.send(envelope.serialize())
         if (sent) {

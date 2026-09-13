@@ -97,10 +97,16 @@ describe('live system.info route', () => {
         if (typeof sessionId !== 'string') {
           throw new Error('system.info.request missing sessionId');
         }
+        // A real agent echoes the request's messageId in relatesTo; that is what the
+        // server correlates on. The session id is only the authorisation frame.
+        const messageId = frame.messageId;
+        if (typeof messageId !== 'string') {
+          throw new Error('system.info.request missing messageId');
+        }
         queueMicrotask(() => {
           harness.context.agentConnections.resolveResponse(
             owned.recordId,
-            sessionId,
+            messageId,
             SYSTEM_INFO,
           );
         });

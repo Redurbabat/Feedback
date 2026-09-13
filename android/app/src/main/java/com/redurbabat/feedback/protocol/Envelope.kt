@@ -24,6 +24,14 @@ data class Envelope(
     val sessionId: String?,
     val timestampEpochMillis: Long,
     val payload: JSONObject,
+    /**
+     * Message level correlation (section 7): a response carries the `messageId` of the request it
+     * answers. Requests leave it null.
+     *
+     * Deliberately not `sessionId`: one `files.read` session carries several requests at once, so
+     * the session cannot tell the second answer from the first.
+     */
+    val relatesTo: String? = null,
 ) {
     val version: Int
         get() = ProtocolConstants.PROTOCOL_VERSION
@@ -34,6 +42,9 @@ data class Envelope(
         json.put(FIELD_TYPE, type.wireName)
         json.put(FIELD_MESSAGE_ID, messageId)
         json.put(FIELD_SESSION_ID, sessionId ?: JSONObject.NULL)
+        if (relatesTo != null) {
+            json.put(FIELD_RELATES_TO, relatesTo)
+        }
         json.put(FIELD_TIMESTAMP, Iso8601.format(timestampEpochMillis))
         json.put(FIELD_PAYLOAD, payload)
         return json
@@ -62,6 +73,7 @@ data class Envelope(
         const val FIELD_TYPE = "type"
         const val FIELD_MESSAGE_ID = "messageId"
         const val FIELD_SESSION_ID = "sessionId"
+        const val FIELD_RELATES_TO = "relatesTo"
         const val FIELD_TIMESTAMP = "timestamp"
         const val FIELD_PAYLOAD = "payload"
 
@@ -71,10 +83,12 @@ data class Envelope(
             sessionId: String?,
             timestampEpochMillis: Long,
             payload: JSONObject = JSONObject(),
+            relatesTo: String? = null,
         ): Envelope {
             require(isUuidV4(messageId)) { "messageId must be a UUID v4" }
             require(sessionId == null || isUuid(sessionId)) { "sessionId must be a UUID" }
-            return Envelope(type, messageId, sessionId, timestampEpochMillis, payload)
+            require(relatesTo == null || isUuidV4(relatesTo)) { "relatesTo must be a UUID v4" }
+            return Envelope(type, messageId, sessionId, timestampEpochMillis, payload, relatesTo)
         }
 
         fun parse(frame: String, nowEpochMillis: Long): EnvelopeResult {
@@ -136,6 +150,19 @@ data class Envelope(
                 )
             }
 
+            val rawRelatesTo = json.opt(FIELD_RELATES_TO)
+            val relatesTo: String?
+            if (rawRelatesTo == null || rawRelatesTo === JSONObject.NULL) {
+                relatesTo = null
+            } else if (rawRelatesTo is String && isUuidV4(rawRelatesTo)) {
+                relatesTo = rawRelatesTo
+            } else {
+                return EnvelopeResult.Failure(
+                    ProtocolError.INVALID_MESSAGE,
+                    "relatesTo is not a UUID v4",
+                )
+            }
+
             val timestampText = readString(json, FIELD_TIMESTAMP)
                 ?: return EnvelopeResult.Failure(
                     ProtocolError.INVALID_MESSAGE,
@@ -170,6 +197,7 @@ data class Envelope(
                     sessionId = sessionId,
                     timestampEpochMillis = timestamp,
                     payload = rawPayload,
+                    relatesTo = relatesTo,
                 ),
             )
         }

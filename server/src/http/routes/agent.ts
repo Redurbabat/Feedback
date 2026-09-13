@@ -57,6 +57,8 @@ const envelopeSchema = z
     type: z.string().min(1).max(64),
     messageId: z.string().regex(MESSAGE_ID_V4, 'muss UUID v4 sein'),
     sessionId: z.string().uuid().nullable(),
+    // Message level correlation (protocol section 7). Present on answers, absent on requests.
+    relatesTo: z.string().regex(MESSAGE_ID_V4, 'muss UUID v4 sein').nullish(),
     timestamp: z.string().min(20).max(40),
     payload: z.unknown(),
   })
@@ -311,10 +313,23 @@ export async function registerAgentRoutes(
           return;
         }
 
+        if (message.relatesTo === undefined || message.relatesTo === null) {
+          // Without the request id there is nothing to hand this answer to. Correlating by
+          // session would be wrong: a session can have several requests open at once.
+          sendError(
+            socket,
+            now,
+            'INVALID_MESSAGE',
+            'Antwort ohne relatesTo laesst sich keiner Anfrage zuordnen',
+            message.messageId,
+          );
+          return;
+        }
+
         await touchPresence(now);
         const accepted = context.agentConnections.resolveResponse(
           principal.device.id,
-          message.sessionId,
+          message.relatesTo,
           payload.data,
         );
         if (!accepted) {

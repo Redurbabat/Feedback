@@ -29,7 +29,7 @@ interface AgentConnectionEntry {
 
 interface PendingResponse {
   readonly deviceId: string;
-  readonly sessionId: string;
+  readonly sessionId: string | null;
   readonly timer: NodeJS.Timeout;
   readonly resolve: (payload: unknown) => void;
   readonly reject: (error: Error) => void;
@@ -57,8 +57,14 @@ export class AgentRequestTimeoutError extends Error {
 }
 
 /**
- * Tracks currently connected device agents in-process and correlates one-shot
- * request/response operations by Remote Session id.
+ * Tracks currently connected device agents in-process and correlates
+ * request/response operations by `messageId`.
+ *
+ * The correlation key is deliberately the message, not the Remote Session: a
+ * `files.read` session carries many requests at once, so keying by session id
+ * would let the second request collide with the first. The session stays the
+ * authorisation frame and is recorded here only so that revoking it can fail
+ * every request still waiting under it (protocol section 8.3.4).
  *
  * This is intentionally an MVP single-node registry. A multi-node deployment
  * needs a shared presence/event layer (for example Redis) behind the same
@@ -161,18 +167,19 @@ export class AgentConnectionRegistry {
 
   /**
    * Sends one privileged request to the freshest connection that locally
-   * advertises `requiredCapability`, then waits for a response correlated by
-   * the unique Remote Session id.
+   * advertises `requiredCapability`, then waits for the response carrying this
+   * `messageId` in `relatesTo`.
    */
   requestDevice(input: {
     deviceId: string;
-    sessionId: string;
+    sessionId: string | null;
+    messageId: string;
     requiredCapability: string;
     frame: string;
     timeoutMs: number;
   }): Promise<unknown> {
-    if (this.pendingResponses.has(input.sessionId)) {
-      return Promise.reject(new Error('duplicate pending session id'));
+    if (this.pendingResponses.has(input.messageId)) {
+      return Promise.reject(new Error('duplicate pending message id'));
     }
 
     const allConnections = this.entriesForDevice(input.deviceId);
@@ -189,12 +196,12 @@ export class AgentConnectionRegistry {
 
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.pendingResponses.delete(input.sessionId);
+        this.pendingResponses.delete(input.messageId);
         reject(new AgentRequestTimeoutError());
       }, input.timeoutMs);
       timer.unref();
 
-      this.pendingResponses.set(input.sessionId, {
+      this.pendingResponses.set(input.messageId, {
         deviceId: input.deviceId,
         sessionId: input.sessionId,
         timer,
@@ -205,20 +212,36 @@ export class AgentConnectionRegistry {
       try {
         connection.socket.send(input.frame);
       } catch {
-        this.finishPending(input.sessionId, undefined, new AgentOfflineError());
+        this.finishPending(input.messageId, undefined, new AgentOfflineError());
         this.unregister(connection.id);
       }
     });
   }
 
   /** Returns false for a late, duplicate, wrong-device or unknown response. */
-  resolveResponse(deviceId: string, sessionId: string, payload: unknown): boolean {
-    const pending = this.pendingResponses.get(sessionId);
+  resolveResponse(deviceId: string, messageId: string, payload: unknown): boolean {
+    const pending = this.pendingResponses.get(messageId);
     if (pending === undefined || pending.deviceId !== deviceId) {
       return false;
     }
-    this.finishPending(sessionId, payload);
+    this.finishPending(messageId, payload);
     return true;
+  }
+
+  /**
+   * Fails every request still waiting under one Remote Session. Called when the
+   * session is revoked or expires, so a caller never keeps waiting on an
+   * authorisation that no longer exists.
+   */
+  rejectPendingForSession(sessionId: string, error: Error): number {
+    let rejected = 0;
+    for (const [messageId, pending] of [...this.pendingResponses]) {
+      if (pending.sessionId === sessionId) {
+        this.finishPending(messageId, undefined, error);
+        rejected += 1;
+      }
+    }
+    return rejected;
   }
 
   closeDevice(deviceId: string, code = 4003, reason = 'device revoked'): number {
@@ -262,12 +285,12 @@ export class AgentConnectionRegistry {
       .filter((entry): entry is AgentConnectionEntry => entry !== undefined);
   }
 
-  private finishPending(sessionId: string, payload?: unknown, error?: Error): void {
-    const pending = this.pendingResponses.get(sessionId);
+  private finishPending(messageId: string, payload?: unknown, error?: Error): void {
+    const pending = this.pendingResponses.get(messageId);
     if (pending === undefined) {
       return;
     }
-    this.pendingResponses.delete(sessionId);
+    this.pendingResponses.delete(messageId);
     clearTimeout(pending.timer);
     if (error !== undefined) {
       pending.reject(error);
@@ -277,9 +300,9 @@ export class AgentConnectionRegistry {
   }
 
   private rejectPendingForDevice(deviceId: string, error: Error): void {
-    for (const [sessionId, pending] of [...this.pendingResponses]) {
+    for (const [messageId, pending] of [...this.pendingResponses]) {
       if (pending.deviceId === deviceId) {
-        this.finishPending(sessionId, undefined, error);
+        this.finishPending(messageId, undefined, error);
       }
     }
   }

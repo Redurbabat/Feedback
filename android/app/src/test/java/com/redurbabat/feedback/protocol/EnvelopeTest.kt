@@ -252,6 +252,63 @@ class EnvelopeTest {
         "\"timestamp\":$timestampJson," +
         "\"payload\":$payloadJson}"
 
+    // --------------------------------------------------------------- relatesTo
+
+    @Test
+    fun aResponseCarriesRelatesToThroughSerialisationAndBack() {
+        val envelope = Envelope.create(
+            type = MessageType.SYSTEM_INFO_RESPONSE,
+            messageId = MESSAGE_ID,
+            sessionId = SESSION_ID,
+            timestampEpochMillis = NOW,
+            payload = JSONObject(),
+            relatesTo = OTHER_MESSAGE_ID,
+        )
+        val parsed = success(Envelope.parse(envelope.serialize(), NOW))
+        assertEquals(OTHER_MESSAGE_ID, parsed.relatesTo)
+    }
+
+    @Test
+    fun aRequestOmitsRelatesToEntirely() {
+        val envelope = Envelope.create(
+            type = MessageType.SYSTEM_INFO_REQUEST,
+            messageId = MESSAGE_ID,
+            sessionId = SESSION_ID,
+            timestampEpochMillis = NOW,
+        )
+        // Absent, not null: the field only exists on answers.
+        assertTrue(!envelope.serialize().contains("relatesTo"))
+        assertNull(success(Envelope.parse(envelope.serialize(), NOW)).relatesTo)
+    }
+
+    @Test
+    fun aMalformedRelatesToIsRejected() {
+        // A correlation key that is not a v4 UUID cannot have been minted by us, so accepting it
+        // would mean answering to an id we never issued.
+        for (bad in listOf("\"$UUID_V1\"", "\"not-a-uuid\"", "42", "{}")) {
+            val frame = "{\"version\":1," +
+                "\"type\":\"system.info.response\"," +
+                "\"messageId\":\"$MESSAGE_ID\"," +
+                "\"sessionId\":\"$SESSION_ID\"," +
+                "\"relatesTo\":$bad," +
+                "\"timestamp\":\"${Iso8601.format(NOW)}\"," +
+                "\"payload\":{}}"
+            assertFailure(ProtocolError.INVALID_MESSAGE, Envelope.parse(frame, NOW))
+        }
+    }
+
+    @Test
+    fun anExplicitNullRelatesToParsesAsAbsent() {
+        val frame = "{\"version\":1," +
+            "\"type\":\"system.info.response\"," +
+            "\"messageId\":\"$MESSAGE_ID\"," +
+            "\"sessionId\":\"$SESSION_ID\"," +
+            "\"relatesTo\":null," +
+            "\"timestamp\":\"${Iso8601.format(NOW)}\"," +
+            "\"payload\":{}}"
+        assertNull(success(Envelope.parse(frame, NOW)).relatesTo)
+    }
+
     private fun success(result: EnvelopeResult): Envelope {
         assertTrue("expected success but was $result", result is EnvelopeResult.Success)
         return (result as EnvelopeResult.Success).envelope
@@ -266,6 +323,7 @@ class EnvelopeTest {
         private const val MESSAGE_ID = "3f2504e0-4f89-41d3-9a0c-0305e82c3301"
         private const val SESSION_ID = "b7c17eb2-23b5-4e87-a32b-29c9151cd353"
         private const val UUID_V1 = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+        private const val OTHER_MESSAGE_ID = "9d5b1c42-8e77-4a11-b3f0-1c2d3e4f5a6b"
         private const val NOW = 1_757_760_000_000L
     }
 }

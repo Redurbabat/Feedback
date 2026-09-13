@@ -95,16 +95,23 @@ function toDeviceView(
   };
 }
 
+/**
+ * Builds one request frame. The caller keeps the `messageId`, because that - not the session - is
+ * what the answer is correlated on (protocol section 7).
+ */
 function agentFrame(
   type: string,
   payload: Record<string, unknown>,
   now: number,
   sessionId: string | null = null,
+  // One-way notifications still need an id, but nobody waits for them, so a fresh
+  // one is fine. A request whose answer is awaited passes its own.
+  messageId: string = randomUUID(),
 ): string {
   return JSON.stringify({
     version: PROTOCOL_VERSION,
     type,
-    messageId: randomUUID(),
+    messageId,
     sessionId,
     timestamp: new Date(now).toISOString(),
     payload,
@@ -252,12 +259,15 @@ export async function registerDeviceRoutes(
       approvedCapabilities: ['system.info'],
     });
 
+    const messageId = randomUUID();
+
     try {
       const payload = await context.agentConnections.requestDevice({
         deviceId: device.id,
         sessionId: remote.id,
+        messageId,
         requiredCapability: 'system.info',
-        frame: agentFrame('system.info.request', {}, startedAt, remote.id),
+        frame: agentFrame('system.info.request', {}, startedAt, remote.id, messageId),
         timeoutMs: AGENT_REQUEST_TIMEOUT_MS,
       });
 

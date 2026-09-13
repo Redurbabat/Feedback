@@ -89,6 +89,7 @@ describe('AgentConnectionRegistry', () => {
     const pending = registry.requestDevice({
       deviceId: 'device-a',
       sessionId: 'session-1',
+      messageId: 'message-1',
       requiredCapability: 'system.info',
       frame: '{"type":"system.info.request"}',
       timeoutMs: 1000,
@@ -96,11 +97,13 @@ describe('AgentConnectionRegistry', () => {
 
     expect(socket.sent).toEqual(['{"type":"system.info.request"}']);
     expect(registry.pendingSize).toBe(1);
-    expect(registry.resolveResponse('other-device', 'session-1', { ok: false })).toBe(false);
-    expect(registry.resolveResponse('device-a', 'session-1', { ok: true })).toBe(true);
+    expect(registry.resolveResponse('other-device', 'message-1', { ok: false })).toBe(false);
+    // The session id is not a correlation key and must not resolve anything.
+    expect(registry.resolveResponse('device-a', 'session-1', { ok: false })).toBe(false);
+    expect(registry.resolveResponse('device-a', 'message-1', { ok: true })).toBe(true);
     await expect(pending).resolves.toEqual({ ok: true });
     expect(registry.pendingSize).toBe(0);
-    expect(registry.resolveResponse('device-a', 'session-1', { ok: true })).toBe(false);
+    expect(registry.resolveResponse('device-a', 'message-1', { ok: true })).toBe(false);
   });
 
   it('denies a privileged request when the device did not grant the capability', async () => {
@@ -111,6 +114,7 @@ describe('AgentConnectionRegistry', () => {
       registry.requestDevice({
         deviceId: 'device-a',
         sessionId: 'session-1',
+        messageId: 'message-1',
         requiredCapability: 'system.info',
         frame: '{}',
         timeoutMs: 100,
@@ -124,6 +128,7 @@ describe('AgentConnectionRegistry', () => {
       registry.requestDevice({
         deviceId: 'device-a',
         sessionId: 'missing',
+        messageId: 'message-missing',
         requiredCapability: 'system.info',
         frame: '{}',
         timeoutMs: 100,
@@ -136,6 +141,7 @@ describe('AgentConnectionRegistry', () => {
     const pending = registry.requestDevice({
       deviceId: 'device-a',
       sessionId: 'disconnecting',
+      messageId: 'message-disconnecting',
       requiredCapability: 'system.info',
       frame: '{}',
       timeoutMs: 1000,
@@ -152,12 +158,70 @@ describe('AgentConnectionRegistry', () => {
     const pending = registry.requestDevice({
       deviceId: 'device-a',
       sessionId: 'session-timeout',
+      messageId: 'message-timeout',
       requiredCapability: 'system.info',
       frame: '{}',
       timeoutMs: 5,
     });
     await expect(pending).rejects.toBeInstanceOf(AgentRequestTimeoutError);
     expect(registry.pendingSize).toBe(0);
+  });
+
+  it('keeps two requests of one session apart and fails both when the session dies', async () => {
+    const registry = new AgentConnectionRegistry();
+    const socket = new FakeSocket();
+    const connection = registry.register('device-a', socket, 1000);
+    registry.setDeviceGrantedCapabilities(connection.id, ['files.read']);
+
+    // A files session carries several requests at once. Keying on the session id
+    // would make the second collide with the first.
+    const first = registry.requestDevice({
+      deviceId: 'device-a',
+      sessionId: 'files-session',
+      messageId: 'message-first',
+      requiredCapability: 'files.read',
+      frame: '{"n":1}',
+      timeoutMs: 1000,
+    });
+    const second = registry.requestDevice({
+      deviceId: 'device-a',
+      sessionId: 'files-session',
+      messageId: 'message-second',
+      requiredCapability: 'files.read',
+      frame: '{"n":2}',
+      timeoutMs: 1000,
+    });
+    expect(registry.pendingSize).toBe(2);
+
+    expect(registry.resolveResponse('device-a', 'message-second', { which: 2 })).toBe(true);
+    await expect(second).resolves.toEqual({ which: 2 });
+    expect(registry.pendingSize).toBe(1);
+
+    // Revoking the session must not leave the first request waiting forever.
+    expect(registry.rejectPendingForSession('files-session', new AgentOfflineError())).toBe(1);
+    await expect(first).rejects.toBeInstanceOf(AgentOfflineError);
+    expect(registry.pendingSize).toBe(0);
+  });
+
+  it('leaves requests of other sessions untouched when one session is revoked', async () => {
+    const registry = new AgentConnectionRegistry();
+    const connection = registry.register('device-a', new FakeSocket(), 1000);
+    registry.setDeviceGrantedCapabilities(connection.id, ['files.read']);
+
+    const keep = registry.requestDevice({
+      deviceId: 'device-a',
+      sessionId: 'session-keep',
+      messageId: 'message-keep',
+      requiredCapability: 'files.read',
+      frame: '{}',
+      timeoutMs: 1000,
+    });
+
+    expect(registry.rejectPendingForSession('session-other', new AgentOfflineError())).toBe(0);
+    expect(registry.pendingSize).toBe(1);
+
+    expect(registry.resolveResponse('device-a', 'message-keep', { ok: true })).toBe(true);
+    await expect(keep).resolves.toEqual({ ok: true });
   });
 
   it('closes and unregisters every connection of a revoked device', () => {
