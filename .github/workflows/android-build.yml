@@ -56,6 +56,26 @@ jobs:
         working-directory: android
         run: gradle :app:assembleDebug --stacktrace
 
+      # Auch der Release-Build laeuft hier, obwohl er hier nichts veroeffentlicht: das ist der
+      # Build, der als APK herausgeht, und ein Fehler darin darf nicht erst beim
+      # Veroeffentlichen auffallen.
+      - name: Build release APK
+        working-directory: android
+        run: gradle :app:assembleRelease --stacktrace
+
+      - name: Pruefen, dass die Release-APK nicht debuggable ist
+        run: |
+          set -euo pipefail
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          AAPT="$(ls -1 "$ANDROID_HOME"/build-tools/*/aapt2 | tail -n 1)"
+          # Eine debuggable APK laesst jeden mit ADB-Zugang ueber `run-as` das private
+          # Datenverzeichnis lesen - ohne Root und ohne die App-Sperre zu kennen.
+          if "$AAPT" dump badging "$APK" | grep -q "application-debuggable"; then
+            echo "FEHLER: die Release-APK ist debuggable."
+            exit 1
+          fi
+          echo "Release-APK ist nicht debuggable."
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:

@@ -87,9 +87,26 @@ jobs:
         working-directory: android
         run: gradle :app:testDebugUnitTest --stacktrace
 
-      - name: Debug-APK bauen
+      # Release, nicht Debug. Eine debuggable APK laesst jeden mit ADB-Zugang ueber `run-as`
+      # das private Datenverzeichnis lesen - ohne Root und ohne die App-Sperre zu kennen. Damit
+      # waeren deviceToken und der versiegelte App-Lock-Zustand abgreifbar.
+      - name: Release-APK bauen
         working-directory: android
-        run: gradle :app:assembleDebug --stacktrace
+        run: gradle :app:assembleRelease --stacktrace
+
+      - name: Pruefen, dass die APK nicht debuggable ist
+        run: |
+          set -euo pipefail
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          AAPT="$(ls -1 "$ANDROID_HOME"/build-tools/*/aapt2 | tail -n 1)"
+          # Ein Waechter, der still gruen wird, waere hier besonders teuer: die Eigenschaft ist
+          # unsichtbar, bis jemand sie ausnutzt.
+          if "$AAPT" dump badging "$APK" | grep -q "application-debuggable"; then
+            echo "FEHLER: die veroeffentlichte APK ist debuggable."
+            exit 1
+          fi
+          echo "APK ist nicht debuggable."
+
 
       - name: Signatur-Fingerabdruck protokollieren
         if: steps.signing.outputs.signed == 'true'
@@ -100,7 +117,7 @@ jobs:
             | grep -i "SHA256" || true
 
       - name: APK benennen
-        run: cp android/app/build/outputs/apk/debug/app-debug.apk Feedback.apk
+        run: cp android/app/build/outputs/apk/release/app-release.apk Feedback.apk
 
       - name: Signaturmaterial wieder entfernen
         if: always()
@@ -113,7 +130,7 @@ jobs:
           tag_name: apk
           name: "Feedback - Android-App"
           body: |
-            Aktuelle Debug-APK von Feedback, automatisch aus `main` gebaut.
+            Aktuelle Release-APK von Feedback, automatisch aus `main` gebaut.
 
             **Was Feedback ist:** eine Verwaltungs-App fuer eigene bzw. ausdruecklich
             autorisierte Geraete. Kopplung erfolgt sichtbar und bestaetigt, Faehigkeiten
@@ -140,7 +157,7 @@ jobs:
           tag_name: apk
           name: "Feedback - Android-App"
           body: |
-            Aktuelle Debug-APK von Feedback, automatisch aus `main` gebaut.
+            Aktuelle Release-APK von Feedback, automatisch aus `main` gebaut.
 
             **Was Feedback ist:** eine Verwaltungs-App fuer eigene bzw. ausdruecklich
             autorisierte Geraete. Kopplung erfolgt sichtbar und bestaetigt, Faehigkeiten

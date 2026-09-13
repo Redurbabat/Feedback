@@ -131,10 +131,19 @@ auch nicht.
 Keystore-versiegelt ist, mit persistent gezaehlten Fehlversuchen und steigender Wartezeit.
 Auto-Lock beim Verlassen der App. Sicherheitskritische Aktionen verlangen erneute Eingabe.
 Aus der Ferne: Geraet im Control Center widerrufen.
+Dazu gehoert eine Eigenschaft der ausgelieferten APK: sie ist **nicht debuggable**. Eine
+debuggable App laesst jeden mit ADB-Zugang ueber `adb shell run-as` ihr privates
+Datenverzeichnis lesen - ohne Root und ohne die App-Sperre zu kennen. Der Geraeteschluessel bliebe
+im Keystore, aber `deviceToken` und der versiegelte App-Lock-Zustand liegen dort, und ein Token
+genuegt, um als das Geraet zu sprechen. Bis zum 13.09.2026 wurde die Debug-APK veroeffentlicht;
+das ist behoben, und beide Android-Workflows brechen ab, wenn die gebaute APK das Flag doch traegt.
+
 **Residual** Eine vorgestellte Systemuhr kann die Wartezeit verkuerzen; ein vertrauenswuerdiger
 lokaler Zeitgeber steht nicht zur Verfuegung. Der Fehlversuchszaehler liegt im privaten
 App-Speicher und schuetzt nicht gegen Root. Biometrie ist eine Komfortschicht vor einer bereits
-per PIN etablierten Sitzung, kein zweiter kryptografischer Faktor.
+per PIN etablierten Sitzung, kein zweiter kryptografischer Faktor. Und ein entsperrtes Telefon
+mit aktiviertem USB-Debugging bleibt ein Sonderfall: dort hilft nur, dass `run-as` auf einer
+nicht-debuggable App nichts ausrichtet.
 
 ### 4.9 Gerootetes oder kompromittiertes Geraet
 

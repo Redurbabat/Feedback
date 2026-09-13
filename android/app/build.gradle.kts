@@ -10,7 +10,12 @@ plugins {
 // fallback password. When anything is missing, no fixed signing config is created at all and the
 // build falls back to the default debug signing, which keeps CI working without secrets.
 //
-// The config is applied to debug as well, because the published artifact is the debug APK.
+// What is PUBLISHED is the release build, not the debug one. A debuggable APK lets anyone with
+// ADB access read the app's private data directory through `run-as`, without root and without
+// knowing the app lock - which would hand over the deviceToken and the sealed app-lock state.
+// The Keystore key itself stays in hardware either way, but a token is enough to speak as the
+// device. Shipping a debuggable build of an app whose whole premise is that secret would
+// undo a good part of it (THREAT_MODEL 4.8).
 val signingValue: (String) -> String? = { name ->
     (project.findProperty(name) as? String)?.takeIf { it.isNotBlank() }
         ?: System.getenv(name)?.takeIf { it.isNotBlank() }
@@ -63,8 +68,13 @@ android {
             }
         }
         release {
-            if (stableSigningAvailable) {
-                signingConfig = signingConfigs.getByName(stableSigningConfigName)
+            // Always signed with something, so the published APK installs. With the secret it is
+            // the stable key, which is what lets an update keep the device identity; without it
+            // the debug key, which changes between machines - the release notes say so.
+            signingConfig = if (stableSigningAvailable) {
+                signingConfigs.getByName(stableSigningConfigName)
+            } else {
+                signingConfigs.getByName("debug")
             }
             isMinifyEnabled = false
             proguardFiles(

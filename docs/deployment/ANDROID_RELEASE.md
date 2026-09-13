@@ -73,8 +73,15 @@ aus dem die Datei `Feedback.apk` direkt auf dem Handy geladen werden kann.
 
 ## Ehrliche Grenzen / offen
 
-- Veroeffentlicht wird die **Debug-APK**, nicht ein minifizierter Release-Build.
-  Sie ist debuggbar und nicht fuer eine Verteilung ausserhalb eigener Geraete gedacht.
+- ~~Veroeffentlicht wird die Debug-APK.~~ **Behoben am 13.09.2026.** Veroeffentlicht wird jetzt
+  der Release-Build. Der Grund war kein Schoenheitsfehler: eine debuggable APK laesst jeden mit
+  ADB-Zugang ueber `adb shell run-as` das private Datenverzeichnis lesen - ohne Root und ohne die
+  App-Sperre zu kennen, also `deviceToken` und den versiegelten App-Lock-Zustand. Beide
+  Android-Workflows pruefen die gebaute APK jetzt mit `aapt2 dump badging` und brechen ab, wenn
+  das Flag doch gesetzt ist.
+- Der Release-Build ist **nicht minifiziert** (`isMinifyEnabled = false`). Das ist Absicht,
+  solange keine ProGuard-Regeln gegen Reflexion in Compose und OkHttp erprobt sind: eine
+  Minifizierung, die etwas wegoptimiert, faellt erst auf dem Geraet auf.
 - Ohne hinterlegte Secrets ist die Signatur zwischen Builds **nicht stabil**.
   Das ist dokumentiert, aber nicht geloest - es braucht die einmalige Einrichtung oben.
 - Es gibt noch keine Versionspflege im Releasetext: `versionCode`/`versionName`
