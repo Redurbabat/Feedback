@@ -13,6 +13,9 @@ Abweichungen in einer Implementierung sind Fehler in der Implementierung, nicht 
 - Groessen- und Ratenlimits werden serverseitig erzwungen.
 - Sicherheitskritische Operationen (Pairing-Start, Pairing-Claim) sind signiert und replay-geschuetzt.
 - Der Server speichert niemals private Geraeteschluessel.
+- Internet-first: jede Strecke ist eine ausgehende Verbindung zum Control Server. Kein
+  Nachrichtentyp und kein Endpunkt setzt voraus, dass Geraet und Control Center im selben
+  Netzwerk sind.
 - Tokens und Tickets werden serverseitig ausschliesslich als SHA-256-Hash gespeichert.
 
 ## 2. Kodierungen

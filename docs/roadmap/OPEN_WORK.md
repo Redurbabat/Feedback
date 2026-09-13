@@ -80,13 +80,17 @@ Geraeteseite implementiert und unit-getestet.
 | Milestone | Stand |
 | --- | --- |
 | 4 Media (`media.photos.read`, `media.videos.read`, Photo Picker) | nicht begonnen |
-| 5 Screen View (`screen.view`, MediaProjection, MediaCodec, WebRTC) | nicht begonnen |
+| 5 Screen View (`screen.view`, MediaProjection, MediaCodec, WebRTC **plus STUN/TURN**) | nicht begonnen |
 | 6 Remote Control (`screen.control`, AccessibilityService, Input-Protokoll) | nicht begonnen |
 | 7 Hardening (Threat Model, Fuzzing, Dependency Audit, Batterie-Review) | nicht begonnen |
 | 8 Windows-Agent | nicht begonnen |
 
 Die Reihenfolge bleibt zwingend: Files → Media → Screen View → Remote Control. Bildschirm- und
 Input-Funktionen werden nicht begonnen, bevor Files stabil ist.
+
+Fuer Milestone 5 gilt ausdruecklich `FEEDBACK_CONSTITUTION.md` Punkt 13: ein STUN/TURN-Pfad ist
+Teil des Milestones, nicht eine spaetere Ausbaustufe. Eine reine Peer-to-Peer-Bildschirmfreigabe,
+die nur im selben Netz funktioniert, zaehlt nicht als implementiert.
 
 ## 4. Bekannte technische Schulden
 

@@ -57,7 +57,27 @@ Das Control Center zeigt Geraete, Berechtigungen, Sessions und freigegebene Inha
 
 ## Verbindung
 
-Phase 1 nutzt HTTPS/WSS fuer Pairing, Presence und Control-Metadaten. Fuer Bildschirm/Medien ist spaeter WebRTC vorgesehen. TURN/STUN und Internet-Relay werden erst nach Threat Model und Auth-Design eingefuehrt.
+Feedback ist internet-first (`FEEDBACK_CONSTITUTION.md` Punkt 13). Geraet und Control Center
+sprechen nie direkt miteinander, sondern jeweils ausgehend mit dem Control Server:
+
+```text
+Android-Agent  --HTTPS/WSS-->  Control Server  <--HTTPS/WSS--  Control Center
+```
+
+Beide Seiten verbinden sich nach aussen. Es gibt keine eingehende Verbindung, keine Portfreigabe
+und keine Netzwerk-Discovery. Das Geraet ist damit ueber Mobilfunk, im fremden WLAN und hinter NAT
+genauso erreichbar wie zu Hause - die Frage "sind beide im selben Netz" stellt sich nicht.
+
+Phase 1 nutzt HTTPS/WSS fuer Pairing, Presence und Control-Metadaten. Dateiinhalte laufen ueber
+dieselbe Strecke: das Geraet streamt Chunks ueber seine WebSocket-Verbindung, der Server reicht sie
+an die HTTP-Antwort des Control Centers weiter und speichert sie nicht.
+
+Fuer Bildschirm und Medien ist spaeter WebRTC vorgesehen. Dabei gilt Punkt 13 unveraendert: eine
+direkte Peer-Strecke ist eine Latenz-Optimierung, nicht die Voraussetzung. Ein STUN/TURN-Pfad
+gehoert deshalb zur Mindestausstattung dieses Milestones und nicht in eine spaetere Ausbaustufe -
+zwischen zwei Mobilfunknetzen oder hinter symmetrischem NAT scheitert eine reine Peer-Verbindung
+regelmaessig. Was ein Relay sieht und was er nicht speichert, wird vor der Einfuehrung im Threat
+Model behandelt.
 
 ## Datenprinzip
 
