@@ -281,6 +281,9 @@ export async function registerDeviceRoutes(
     // Stop the bytes before closing the socket: a transfer in flight must not keep
     // delivering a file from a device that was just revoked.
     context.fileTransfers.cancelForDevice(device.id, 'device_revoked', 'Geraet wurde widerrufen');
+    // Same reason for the picture: a revoked device must stop capturing before its
+    // socket closes, not when the stream happens to time out.
+    context.screenStreams.stopForDevice(device.id, 'device_revoked', 'Geraet wurde widerrufen');
     context.agentConnections.closeDevice(device.id, 4003, 'device revoked');
 
     await context.audit.record({

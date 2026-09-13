@@ -23,6 +23,9 @@ export const AUDIT_EVENT_TYPES = [
   'file.transfer.started',
   'file.transfer.completed',
   'file.transfer.cancelled',
+  'screen.session.open',
+  'screen.stream.started',
+  'screen.stream.ended',
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];

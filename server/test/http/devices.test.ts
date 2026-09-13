@@ -169,7 +169,9 @@ describe('device and agent routes', () => {
         method: 'PUT',
         url: `/api/v1/devices/${provisioned.recordId}/capabilities`,
         headers: controlHeaders(provisioned.session),
-        payload: { grantedCapabilities: ['screen.view'] },
+        // screen.control has no implementation behind it, so the server must refuse
+        // to grant it no matter what the owner ticks in the control center.
+        payload: { grantedCapabilities: ['screen.control'] },
       });
       expect(unsupported.statusCode).toBe(400);
       expect((unsupported.json() as { error: { code: string } }).error.code).toBe('UNSUPPORTED');

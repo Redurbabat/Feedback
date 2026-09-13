@@ -8,6 +8,7 @@ import { NONCE_RETENTION_MS } from './constants.js';
 
 /** Background house keeping interval for expired rows. */
 const MAINTENANCE_INTERVAL_MS = 5 * 60_000;
+const HUB_SWEEP_INTERVAL_MS = 5_000;
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -35,9 +36,6 @@ async function main(): Promise<void> {
         await context.repositories.pairingSessions.expireStale(now);
         await context.repositories.pairingNonces.deleteExpired(now - NONCE_RETENTION_MS);
         await context.sessions.pruneExpired();
-        // A transfer whose device stopped talking would otherwise hold a response
-        // open forever.
-        context.fileTransfers.sweep(now);
       } catch (error) {
         app.log.error({ err: error }, 'maintenance run failed');
       }
@@ -45,9 +43,25 @@ async function main(): Promise<void> {
   }, MAINTENANCE_INTERVAL_MS);
   maintenance.unref();
 
+  /**
+   * Second, much faster loop for the two transfer hubs.
+   *
+   * Their idle timeouts are measured in seconds (15 for a screen stream, 30 for a
+   * file transfer), while the maintenance run above is on a five minute cycle.
+   * Sweeping them there would have turned both limits into fiction: a stalled stream
+   * would have kept a response and a MediaProjection alive for minutes.
+   */
+  const hubSweep = setInterval(() => {
+    const now = context.clock.now();
+    context.fileTransfers.sweep(now);
+    context.screenStreams.sweep(now);
+  }, HUB_SWEEP_INTERVAL_MS);
+  hubSweep.unref();
+
   const shutdown = (signal: string): void => {
     app.log.info({ signal }, 'shutting down');
     clearInterval(maintenance);
+    clearInterval(hubSweep);
     void app.close().then(
       () => {
         handle.close();

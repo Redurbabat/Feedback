@@ -91,6 +91,7 @@ export const IMPLEMENTED_CAPABILITIES_V1: readonly CapabilityV1[] = [
   'files.read',
   'media.photos.read',
   'media.videos.read',
+  'screen.view',
 ];
 
 /**

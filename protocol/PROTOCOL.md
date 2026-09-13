@@ -757,7 +757,11 @@ deshalb in `chunkCount` Teile zu hoechstens `SCREEN_CHUNK_BYTES` Rohbytes zerleg
   Uhrzeit des Geraets.
 - `data` ist `base64` (mit Padding).
 - Ein Frame ueber `SCREEN_MAX_FRAME_BYTES` wird verworfen, statt beliebig viel Speicher fuer die
-  Wiederzusammensetzung zu binden.
+  Wiederzusammensetzung zu binden. Reicht dafuer schon `chunkCount`, wird er verworfen, bevor ein
+  einziges Byte gehalten wird.
+- Ein Chunk ueber `SCREEN_CHUNK_BYTES` oder ein `chunkIndex` ausserhalb von
+  `0 .. chunkCount - 1` ⇒ `INVALID_MESSAGE` und beendet den Strom. Das ist kein Verlust, sondern
+  eine Gegenseite, die sich selbst widerspricht.
 
 #### 8.5.7 Gegendruck und Verlust - anders als bei Dateien
 
@@ -769,6 +773,8 @@ das falsch: eine Datei muss vollstaendig sein, ein Bild muss **aktuell** sein.
   wachsen lassen, bis das Bild nicht mehr zeigt, was gerade passiert.
 - Ein unvollstaendig gebliebener Frame (ein Chunk fehlt, wenn der naechste Frame beginnt) wird
   verworfen.
+- Der Server bestaetigt **jede** Sequenz, mit der er fertig ist - auch eine verworfene. Sonst
+  bliebe ihr Platz im Fenster des Geraets fuer immer belegt.
 - **Wer einen Frame verwirft, fordert einen Keyframe an.** Ohne den vorherigen Frame ist ein
   Delta-Frame wertlos, und ein Betrachter, der Artefakte zeigt, ist schlimmer als einer, der kurz
   wartet. Der Server sendet dafuer `screen.keyframe.request`; das Geraet fordert intern einen

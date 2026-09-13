@@ -12,10 +12,14 @@ import {
   IMPLEMENTED_CAPABILITIES_V1,
   MAX_FRAME_BYTES,
   PROTOCOL_VERSION,
+  SCREEN_CHUNK_BYTES,
+  SCREEN_MAX_DIMENSION,
+  SCREEN_MAX_FPS,
 } from '../../constants.js';
 import type { AppContext } from '../../context.js';
 import type { ErrorCode } from '../../errors.js';
 import { isTransferCancelReason } from '../../services/fileTransfers.js';
+import { isScreenStopReason } from '../../services/screenStreams.js';
 import { requireDevicePrincipal, requireDeviceToken } from '../deviceAuth.js';
 
 const MESSAGE_ID_V4 =
@@ -94,6 +98,56 @@ const downloadCompleteSchema = z
 const downloadCancelSchema = z
   .object({
     transferId: transferIdSchema,
+    reason: z.string().max(32),
+  })
+  .strict();
+
+const streamIdSchema = z.string().uuid();
+
+const screenConsentSchema = z
+  .object({
+    streamId: streamIdSchema,
+    state: z.enum(['pending', 'granted', 'declined']),
+  })
+  .strict();
+
+/**
+ * What the encoder actually produced.
+ *
+ * Every number is bounded by the protocol limit rather than trusted: a device that
+ * reports 8000x8000 at 120 fps is either broken or lying, and both are answered the
+ * same way.
+ */
+const screenStartedSchema = z
+  .object({
+    streamId: streamIdSchema,
+    width: z.number().int().min(16).max(SCREEN_MAX_DIMENSION),
+    height: z.number().int().min(16).max(SCREEN_MAX_DIMENSION),
+    codec: z
+      .string()
+      .min(4)
+      .max(32)
+      .regex(/^[A-Za-z0-9.-]+$/u, 'muss ein Codec-String wie avc1.42E01E sein'),
+    fps: z.number().int().min(1).max(SCREEN_MAX_FPS),
+    config: z.string().max(4096),
+  })
+  .strict();
+
+const screenFrameSchema = z
+  .object({
+    streamId: streamIdSchema,
+    sequence: z.number().int().min(0),
+    chunkIndex: z.number().int().min(0),
+    chunkCount: z.number().int().min(1),
+    keyFrame: z.boolean(),
+    timestampUs: z.number().int().min(0),
+    data: z.string().max(Math.ceil((SCREEN_CHUNK_BYTES * 4) / 3) + 8),
+  })
+  .strict();
+
+const screenStopSchema = z
+  .object({
+    streamId: streamIdSchema,
     reason: z.string().max(32),
   })
   .strict();
@@ -582,6 +636,228 @@ export async function registerAgentRoutes(
         sendError(socket, now, 'UNSUPPORTED', 'Unbekannter files-Nachrichtentyp', message.messageId);
       };
 
+      /**
+       * Handles every `screen.*` frame from the device.
+       *
+       * The capability is re-checked per frame for the same reason as with files: a
+       * stream that is already running has to stop the moment either side withdraws
+       * screen.view. Waiting for the ten minute session to expire would keep showing
+       * a picture the owner already said no to - and here the picture is the whole
+       * display, not one shared folder.
+       */
+      const processScreenMessage = async (
+        message: z.infer<typeof envelopeSchema>,
+        now: number,
+      ): Promise<void> => {
+        if (message.sessionId === null) {
+          sendError(
+            socket,
+            now,
+            'SESSION_EXPIRED',
+            'screen-Nachrichten benoetigen eine Remote Session',
+            message.messageId,
+          );
+          return;
+        }
+
+        const remote = await context.repositories.remoteSessions.findById(message.sessionId);
+        if (
+          remote === undefined ||
+          remote.deviceId !== principal.device.id ||
+          remote.revokedAt !== null ||
+          remote.expiresAt <= now ||
+          !remote.approvedCapabilities.includes('screen.view')
+        ) {
+          context.screenStreams.stopForSession(
+            message.sessionId,
+            'session_expired',
+            'remote session is no longer valid',
+          );
+          sendError(
+            socket,
+            now,
+            'SESSION_EXPIRED',
+            'Remote Session ist nicht mehr gueltig',
+            message.messageId,
+          );
+          return;
+        }
+
+        const serverGranted = await serverGrantedCapabilities(context, principal.device.id);
+        const local = context.agentConnections.snapshot(connection.id);
+        if (
+          !serverGranted.includes('screen.view') ||
+          local === undefined ||
+          !local.deviceGrantedCapabilities.includes('screen.view')
+        ) {
+          context.screenStreams.stopForSession(
+            message.sessionId,
+            'capability_revoked',
+            'screen.view is no longer effective',
+          );
+          sendError(
+            socket,
+            now,
+            'CAPABILITY_DENIED',
+            'screen.view ist nicht wirksam freigegeben',
+            message.messageId,
+          );
+          return;
+        }
+
+        // Deliberately not on every frame: at fifteen frames a second a presence write
+        // per frame would be a database write per frame. The acks already prove the
+        // stream is alive, and the idle sweep is what notices when it is not.
+        if (message.type !== 'screen.frame') {
+          await touchPresence(now);
+        }
+
+        if (message.type === 'screen.consent') {
+          const parsed = screenConsentSchema.safeParse(message.payload);
+          if (!parsed.success) {
+            sendError(
+              socket,
+              now,
+              'INVALID_MESSAGE',
+              'Ungueltiger screen.consent Payload',
+              message.messageId,
+            );
+            return;
+          }
+          const accepted = context.screenStreams.handleConsent(
+            principal.device.id,
+            parsed.data.streamId,
+            parsed.data.state,
+            now,
+          );
+          if (!accepted) {
+            sendError(
+              socket,
+              now,
+              'SESSION_EXPIRED',
+              'Zustimmung gehoert zu keinem offenen Strom',
+              message.messageId,
+            );
+          }
+          return;
+        }
+
+        if (message.type === 'screen.started') {
+          const parsed = screenStartedSchema.safeParse(message.payload);
+          if (!parsed.success) {
+            sendError(
+              socket,
+              now,
+              'INVALID_MESSAGE',
+              'Ungueltiger screen.started Payload',
+              message.messageId,
+            );
+            return;
+          }
+          const { streamId, ...info } = parsed.data;
+          if (decodeChunk(info.config) === undefined) {
+            sendError(
+              socket,
+              now,
+              'INVALID_MESSAGE',
+              'Encoder-Konfiguration ist kein gueltiges base64',
+              message.messageId,
+            );
+            return;
+          }
+          const accepted = context.screenStreams.handleStarted(
+            principal.device.id,
+            streamId,
+            info,
+            now,
+          );
+          if (!accepted) {
+            sendError(
+              socket,
+              now,
+              'SESSION_EXPIRED',
+              'screen.started gehoert zu keinem offenen Strom',
+              message.messageId,
+            );
+          }
+          return;
+        }
+
+        if (message.type === 'screen.frame') {
+          const parsed = screenFrameSchema.safeParse(message.payload);
+          if (!parsed.success) {
+            sendError(
+              socket,
+              now,
+              'INVALID_MESSAGE',
+              'Ungueltiger screen.frame Payload',
+              message.messageId,
+            );
+            return;
+          }
+          const data = decodeChunk(parsed.data.data);
+          if (data === undefined) {
+            sendError(
+              socket,
+              now,
+              'INVALID_MESSAGE',
+              'Frame-Chunk ist kein gueltiges base64',
+              message.messageId,
+            );
+            return;
+          }
+          const accepted = context.screenStreams.handleFrame({
+            deviceId: principal.device.id,
+            streamId: parsed.data.streamId,
+            sequence: parsed.data.sequence,
+            chunkIndex: parsed.data.chunkIndex,
+            chunkCount: parsed.data.chunkCount,
+            keyFrame: parsed.data.keyFrame,
+            timestampUs: parsed.data.timestampUs,
+            data,
+            now,
+          });
+          if (!accepted) {
+            sendError(
+              socket,
+              now,
+              'INVALID_MESSAGE',
+              'Frame gehoert zu keinem offenen Strom oder verletzt die Reihenfolge',
+              message.messageId,
+            );
+          }
+          return;
+        }
+
+        if (message.type === 'screen.stop') {
+          const parsed = screenStopSchema.safeParse(message.payload);
+          if (!parsed.success || !isScreenStopReason(parsed.data.reason)) {
+            sendError(
+              socket,
+              now,
+              'INVALID_MESSAGE',
+              'Ungueltiger screen.stop Payload',
+              message.messageId,
+            );
+            return;
+          }
+          context.screenStreams.stopFromDevice(
+            principal.device.id,
+            parsed.data.streamId,
+            parsed.data.reason,
+          );
+          return;
+        }
+
+        sendError(
+          socket,
+          now,
+          'UNSUPPORTED',
+          'Unbekannter screen-Nachrichtentyp',
+          message.messageId,
+        );
+      };
+
       const processFrame = async (raw: unknown): Promise<void> => {
         if (closed) {
           return;
@@ -673,6 +949,11 @@ export async function registerAgentRoutes(
 
         if (message.type.startsWith('files.')) {
           await processFilesMessage(message, now);
+          return;
+        }
+
+        if (message.type.startsWith('screen.')) {
+          await processScreenMessage(message, now);
           return;
         }
 
@@ -805,6 +1086,14 @@ export async function registerAgentRoutes(
           context.fileTransfers.cancelForDevice(
             principal.device.id,
             'read_error',
+            'agent connection closed',
+          );
+          // The device is required to stop its own MediaProjection on connection loss
+          // (protocol 8.5.9). Ending the viewer's stream here is the other half: the
+          // browser must not keep a half-open picture that will never update again.
+          context.screenStreams.stopForDevice(
+            principal.device.id,
+            'connection_lost',
             'agent connection closed',
           );
         }

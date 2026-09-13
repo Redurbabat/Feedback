@@ -23,6 +23,8 @@ export const RATE_LIMITS = {
   pairingClaim: { limit: 10, windowMs: 10 * 60_000 },
   filesSession: { limit: 30, windowMs: 10 * 60_000 },
   filesContent: { limit: 60, windowMs: 10 * 60_000 },
+  screenSession: { limit: 20, windowMs: 10 * 60_000 },
+  screenKeyframe: { limit: 60, windowMs: 10 * 60_000 },
   apiDefault: { limit: 600, windowMs: 10 * 60_000 },
 } as const satisfies Record<string, RateLimitRule>;
 

@@ -7,6 +7,7 @@ import type { Repositories } from './db/repositories/types.js';
 import { RateLimiter } from './http/rateLimit.js';
 import { AgentConnectionRegistry } from './services/agentConnections.js';
 import { FileTransferHub } from './services/fileTransfers.js';
+import { ScreenStreamHub } from './services/screenStreams.js';
 import { createAuditLogger } from './services/audit.js';
 import type { AuditLogger } from './services/audit.js';
 import type { Clock } from './services/clock.js';
@@ -44,6 +45,7 @@ export interface AppContext {
   readonly pairing: PairingService;
   readonly agentConnections: AgentConnectionRegistry;
   readonly fileTransfers: FileTransferHub;
+  readonly screenStreams: ScreenStreamHub;
   readonly errors: ErrorSink;
 }
 
@@ -91,6 +93,7 @@ export function createAppContext(options: CreateAppContextOptions): AppContext {
     pairing,
     agentConnections: new AgentConnectionRegistry(),
     fileTransfers: new FileTransferHub(),
+    screenStreams: new ScreenStreamHub(),
     errors,
   };
 }
