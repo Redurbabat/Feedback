@@ -1,7 +1,22 @@
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
-import { promisify } from 'node:util';
+import type { ScryptOptions } from 'node:crypto';
 
-const scrypt = promisify(scryptCallback);
+function scrypt(
+  password: string,
+  salt: Buffer,
+  keyLength: number,
+  options: ScryptOptions,
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scryptCallback(password, salt, keyLength, options, (error, derivedKey) => {
+      if (error !== null) {
+        reject(error);
+        return;
+      }
+      resolve(derivedKey);
+    });
+  });
+}
 
 /**
  * Password hashing with scrypt (node:crypto, no external dependency).
@@ -45,13 +60,12 @@ async function deriveKey(
   salt: Buffer,
   parameters: ScryptParameters,
 ): Promise<Buffer> {
-  const derived = (await scrypt(password.normalize('NFKC'), salt, parameters.keyLength, {
+  return scrypt(password.normalize('NFKC'), salt, parameters.keyLength, {
     N: parameters.cost,
     r: parameters.blockSize,
     p: parameters.parallelism,
     maxmem: maxmemFor(parameters),
-  })) as Buffer;
-  return derived;
+  });
 }
 
 /** Creates a new password record. The plaintext never leaves this function. */
