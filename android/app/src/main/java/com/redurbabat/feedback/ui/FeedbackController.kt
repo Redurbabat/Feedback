@@ -49,6 +49,12 @@ sealed interface PairingUiPhase {
 
     data class Waiting(
         val displayCode: String,
+        /**
+         * The `feedback://pair?v=1&ticket=...` payload. The ticket is meant to be shown - that is
+         * how the browser identifies this pairing - and dies with the session. The `deviceSecret`
+         * and the device token never appear in UI state.
+         */
+        val qrPayload: String,
         val expiresAt: String,
     ) : PairingUiPhase
 
@@ -89,7 +95,8 @@ data class FeedbackUiState(
 /**
  * Coordinator for the visible Android app.
  *
- * Pairing secrets and the device token never enter [FeedbackUiState]. The token is persisted only
+ * The device token and the `deviceSecret` never enter [FeedbackUiState]; the pairing ticket does,
+ * because showing it as a QR code is its purpose, and it dies with the session. The token is persisted only
  * through [DeviceRegistrationStore], which seals the complete registration with Android Keystore.
  * A persistent connection is opt-in and handed to [BackgroundAgentService], which is a visible
  * foreground service with an ongoing notification and user-accessible stop action.
@@ -655,6 +662,7 @@ class FeedbackController(
             _state.value = _state.value.copy(
                 pairing = PairingUiPhase.Waiting(
                     displayCode = session.displayCode,
+                    qrPayload = session.qrPayload,
                     expiresAt = session.expiresAt,
                 ),
             )

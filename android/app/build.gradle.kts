@@ -116,6 +116,8 @@ dependencies {
     implementation(libs.androidx.compose.material3)
 
     implementation(libs.okhttp)
+    // Pure-Java QR encoder; no android.* and no camera code is pulled in.
+    implementation(libs.zxing.core)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
 

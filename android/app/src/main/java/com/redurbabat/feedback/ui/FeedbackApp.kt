@@ -40,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -350,9 +351,15 @@ private fun PairingCard(
 
                 is PairingUiPhase.Waiting -> {
                     Text(
-                        text = "Code im Control Center eingeben",
+                        text = "Im Control Center scannen oder Code eingeben",
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary,
+                    )
+                    QrCodeImage(
+                        payload = pairing.qrPayload,
+                        contentDescription = "QR-Code für diese Kopplung. " +
+                            "Alternativ den sechsstelligen Code eingeben.",
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
                     )
                     Text(
                         text = pairing.displayCode.chunked(3).joinToString(" "),
@@ -361,7 +368,7 @@ private fun PairingCard(
                         fontWeight = FontWeight.Bold,
                     )
                     Text(
-                        text = "Öffne das Feedback Control Center, melde dich an und bestätige genau dieses Gerät. Der Code ist kurzlebig und ersetzt nicht den kryptografischen Gerätenachweis.",
+                        text = "Öffne das Feedback Control Center, melde dich an und bestätige genau dieses Gerät. QR-Code und Zahlencode sind kurzlebig und ersetzen nicht den kryptografischen Gerätenachweis. Der QR-Code enthält weder einen privaten Schlüssel noch ein Geräte-Token.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

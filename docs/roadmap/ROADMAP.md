@@ -27,7 +27,8 @@
 - [x] Control-Web-Grundprojekt
 - [x] kurzlebige Pairing-Tickets und getrenntes Device-Secret
 - [x] sechsstelliger Zahlencode mit Limits und kurzer TTL
-- [ ] QR-Code in Android sichtbar rendern bzw. scannen
+- [x] QR-Code des Pairing-Tickets in Android rendern
+- [ ] QR-Code scannen (Kamera, erst mit dokumentiertem Bedarf)
 - [x] Public-Key-Registrierung und signierter Claim
 - [x] verschluesseltes lokales Device-Token
 - [x] authentifizierter Agent-WebSocket mit Heartbeat
