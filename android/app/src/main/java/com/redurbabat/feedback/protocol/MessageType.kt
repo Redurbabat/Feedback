@@ -29,6 +29,13 @@ enum class MessageType(
     FILES_DOWNLOAD_ACK("files.download.ack", true),
     FILES_DOWNLOAD_COMPLETE("files.download.complete", true),
     FILES_DOWNLOAD_CANCEL("files.download.cancel", true),
+    SCREEN_START("screen.start", true),
+    SCREEN_CONSENT("screen.consent", true),
+    SCREEN_STARTED("screen.started", true),
+    SCREEN_FRAME("screen.frame", true),
+    SCREEN_FRAME_ACK("screen.frame.ack", true),
+    SCREEN_KEYFRAME_REQUEST("screen.keyframe.request", true),
+    SCREEN_STOP("screen.stop", true),
     DEVICE_REVOKED("device.revoked", false),
     ERROR("error", false);
 

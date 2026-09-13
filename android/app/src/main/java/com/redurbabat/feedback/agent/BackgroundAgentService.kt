@@ -21,6 +21,7 @@ import com.redurbabat.feedback.device.SystemInfoProvider
 import com.redurbabat.feedback.files.FilesAgentFactory
 import com.redurbabat.feedback.pairing.AndroidDeviceMetadataProvider
 import com.redurbabat.feedback.permissions.LocalCapabilityStore
+import com.redurbabat.feedback.screen.AndroidScreenCapture
 import com.redurbabat.feedback.security.DeviceRegistrationStore
 import com.redurbabat.feedback.security.SecretStore
 import kotlinx.coroutines.CoroutineScope
@@ -128,6 +129,8 @@ class BackgroundAgentService : Service() {
             systemInfoProvider = SystemInfoProvider(this),
             registrationStore = registrationStore,
             filesHandler = FilesAgentFactory.create(this, secretStore),
+            screenCapture = AndroidScreenCapture(this),
+            displaySize = { AndroidScreenCapture.displaySize(this) },
         )
         agent = next
         currentAgent = next

@@ -15,6 +15,11 @@ import com.redurbabat.feedback.protocol.EnvelopeResult
 import com.redurbabat.feedback.protocol.MessageType
 import com.redurbabat.feedback.protocol.ProtocolConstants
 import com.redurbabat.feedback.protocol.ProtocolError
+import com.redurbabat.feedback.screen.OutgoingScreenMessage
+import com.redurbabat.feedback.screen.ScreenCaptureSource
+import com.redurbabat.feedback.screen.ScreenOutcome
+import com.redurbabat.feedback.screen.ScreenRequestHandler
+import com.redurbabat.feedback.screen.ScreenStopReason
 import com.redurbabat.feedback.security.DeviceRegistrationStore
 import com.redurbabat.feedback.security.StoredDeviceRegistration
 import java.util.UUID
@@ -65,11 +70,24 @@ class DeviceAgentClient(
     private val registrationStore: DeviceRegistrationStore,
     /** Null where the device has no shared areas wired up; files.read then answers UNSUPPORTED. */
     private val filesHandler: FilesRequestHandler? = null,
+    /** Null where screen capture is not wired up; screen.view then answers UNSUPPORTED. */
+    private val screenCapture: ScreenCaptureSource? = null,
+    /** The display size the encoder should mirror, as (width, height) in pixels. */
+    private val displaySize: () -> Pair<Int, Int> = { Pair(0, 0) },
     private val client: OkHttpClient = OkHttpClient.Builder()
         .pingInterval(0, TimeUnit.SECONDS)
         .build(),
     private val now: () -> Long = System::currentTimeMillis,
 ) {
+    /**
+     * Built here rather than injected, because it needs a way to say "there is something to
+     * send" and only this class knows the socket. Frames arrive from the encoder without anyone
+     * asking for them, so waiting for the next incoming message would add a frame of delay.
+     */
+    private val screenHandler: ScreenRequestHandler? = screenCapture?.let { source ->
+        ScreenRequestHandler(source) { pushScreenMessages() }
+    }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _state = MutableStateFlow(AgentConnectionState.STOPPED)
     val state: StateFlow<AgentConnectionState> = _state.asStateFlow()
@@ -102,7 +120,18 @@ class DeviceAgentClient(
         webSocket = client.newWebSocket(request, Listener())
     }
 
+    /**
+     * Protocol section 8.5.9: the projection stops the moment the connection does.
+     *
+     * Not "kept warm for a reconnect". A capture with nobody receiving it is the device filming
+     * itself while the owner believes the session is over (THREAT_MODEL 4.17).
+     */
+    private fun stopScreenCaptureOnConnectionLoss() {
+        screenHandler?.stopLocally(ScreenStopReason.CONNECTION_LOST)
+    }
+
     fun stop() {
+        stopScreenCaptureOnConnectionLoss()
         heartbeatJob?.cancel()
         heartbeatJob = null
         webSocket?.close(1000, "client stopped")
@@ -143,6 +172,7 @@ class DeviceAgentClient(
             heartbeatJob?.cancel()
             heartbeatJob = null
             this@DeviceAgentClient.webSocket = null
+            stopScreenCaptureOnConnectionLoss()
             if (_state.value != AgentConnectionState.REVOKED &&
                 _state.value != AgentConnectionState.STOPPED
             ) {
@@ -154,6 +184,7 @@ class DeviceAgentClient(
             heartbeatJob?.cancel()
             heartbeatJob = null
             this@DeviceAgentClient.webSocket = null
+            stopScreenCaptureOnConnectionLoss()
             if (_state.value != AgentConnectionState.REVOKED &&
                 _state.value != AgentConnectionState.STOPPED
             ) {
@@ -175,6 +206,12 @@ class DeviceAgentClient(
             MessageType.FILES_DOWNLOAD_ACK,
             MessageType.FILES_DOWNLOAD_CANCEL,
             -> handleFilesRequest(socket, envelope)
+
+            MessageType.SCREEN_START,
+            MessageType.SCREEN_FRAME_ACK,
+            MessageType.SCREEN_KEYFRAME_REQUEST,
+            MessageType.SCREEN_STOP,
+            -> handleScreenRequest(socket, envelope)
 
             MessageType.DEVICE_REVOKED -> handleRevoked(socket)
             MessageType.ERROR -> Unit
@@ -218,6 +255,11 @@ class DeviceAgentClient(
         if (!serverGranted.contains(Capability.FILES_READ)) {
             // A withdrawn capability must stop an already running transfer, not just future ones.
             webSocket?.let { cancelFileTransfers(it, FileTransferCancelReason.CAPABILITY_REVOKED) }
+        }
+        if (!serverGranted.contains(Capability.SCREEN_VIEW)) {
+            // Same rule, and it matters more here: a withdrawn screen.view has to stop the
+            // MediaProjection now, not when the ten minute session happens to run out.
+            screenHandler?.stopLocally(ScreenStopReason.CAPABILITY_REVOKED)
         }
     }
 
@@ -335,6 +377,99 @@ class DeviceAgentClient(
         drainFileTransfers(socket, envelope.sessionId)
     }
 
+    /**
+     * Answers one `screen.*` request.
+     *
+     * As with files, the capability is re-evaluated per request rather than per session. Unlike
+     * files, a denial also stops the capture: a picture the owner just revoked must not keep
+     * being taken while the refusal travels back.
+     */
+    private fun handleScreenRequest(socket: WebSocket, envelope: Envelope) {
+        val sessionError = envelope.sessionRequirementError()
+        if (sessionError != null) {
+            sendError(socket, envelope.messageId, sessionError, "Remote Session fehlt")
+            return
+        }
+
+        val handler = screenHandler
+        if (handler == null) {
+            sendError(
+                socket,
+                envelope.messageId,
+                ProtocolError.UNSUPPORTED,
+                "screen.view ist auf diesem Geraet nicht verfuegbar",
+            )
+            return
+        }
+
+        val denial = EffectivePermission.evaluate(
+            capability = Capability.SCREEN_VIEW,
+            serverGranted = serverGranted,
+            deviceGranted = localCapabilities.granted(),
+            osAvailable = setOf(Capability.SCREEN_VIEW),
+            sessionAuthorized = setOf(Capability.SCREEN_VIEW),
+        ).denialReason()
+        if (denial != null) {
+            handler.stopLocally(ScreenStopReason.CAPABILITY_REVOKED)
+            sendError(socket, envelope.messageId, denial, "screen.view ist nicht freigegeben")
+            return
+        }
+
+        val outcome = when (envelope.type) {
+            MessageType.SCREEN_START -> {
+                val (width, height) = displaySize()
+                handler.handleStart(envelope.payload, envelope.sessionId, width, height)
+            }
+            MessageType.SCREEN_FRAME_ACK -> handler.handleAck(envelope.payload)
+            MessageType.SCREEN_KEYFRAME_REQUEST -> handler.handleKeyframeRequest(envelope.payload)
+            MessageType.SCREEN_STOP -> handler.handleStop(envelope.payload)
+            else -> ScreenOutcome.Failure(ProtocolError.UNSUPPORTED, "Unerwarteter screen-Typ")
+        }
+
+        if (outcome is ScreenOutcome.Failure) {
+            sendError(socket, envelope.messageId, outcome.error, outcome.message)
+        }
+        drainScreenMessages(socket, envelope.sessionId)
+    }
+
+    /**
+     * Puts out everything the screen handler has queued.
+     *
+     * Called both from request handling and from the handler's own "there is something to send"
+     * callback, because frames arrive without anybody asking for them.
+     */
+    private fun drainScreenMessages(socket: WebSocket, sessionId: String?) {
+        val handler = screenHandler ?: return
+        for (message in handler.drainReadyMessages()) {
+            if (!sendScreenMessage(socket, sessionId, message)) {
+                return
+            }
+        }
+    }
+
+    /**
+     * The encoder has frames ready.
+     *
+     * Runs on the encoder thread. If the socket is gone the capture has to end, not queue: a
+     * projection with nowhere to send is exactly what section 8.5.9 forbids.
+     */
+    private fun pushScreenMessages() {
+        val handler = screenHandler ?: return
+        val socket = webSocket
+        if (socket == null) {
+            handler.stopLocally(ScreenStopReason.CONNECTION_LOST)
+            return
+        }
+        drainScreenMessages(socket, handler.activeSessionId)
+    }
+
+    /** Frames correlate through `streamId`, so `relatesTo` is not set on them. */
+    private fun sendScreenMessage(
+        socket: WebSocket,
+        sessionId: String?,
+        message: OutgoingScreenMessage,
+    ): Boolean = send(socket, message.type, sessionId, message.payload)
+
     /** Puts out every chunk the send window currently allows. */
     private fun drainFileTransfers(socket: WebSocket, sessionId: String?) {
         val handler = filesHandler ?: return
@@ -365,6 +500,7 @@ class DeviceAgentClient(
 
     private fun handleRevoked(socket: WebSocket) {
         cancelFileTransfers(socket, FileTransferCancelReason.DEVICE_REVOKED)
+        screenHandler?.stopLocally(ScreenStopReason.DEVICE_REVOKED)
         registrationStore.clear()
         heartbeatJob?.cancel()
         heartbeatJob = null

@@ -35,16 +35,7 @@ const FILES = {
  * Anything not listed here is a finding. Removing an entry must make the check pass,
  * never fail - otherwise the list becomes a place to hide problems.
  */
-const KNOWN_GAPS = [
-  {
-    id: 'server-implemented-capabilities',
-    reason:
-      'screen.view: die Serverhaelfte (ScreenStreamHub, SSE-Bruecke, vier Endpunkte) ist fertig, ' +
-      'die Android-Seite noch nicht. Der Server darf die Capability deshalb kennen, das Geraet ' +
-      'meldet sie noch nicht als implementiert. Faellt weg, sobald Capability.kt SCREEN_VIEW auf ' +
-      'true setzt - siehe docs/roadmap/OPEN_WORK.md Milestone 5.',
-  },
-];
+const KNOWN_GAPS = [];
 
 const problems = [];
 const notes = [];

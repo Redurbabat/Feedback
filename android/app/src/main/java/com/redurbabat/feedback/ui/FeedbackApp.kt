@@ -654,6 +654,16 @@ private fun CapabilityCard(
                 checked = state.mediaVideosGrantedLocally,
                 onCheckedChange = { onCapabilityChanged(Capability.MEDIA_VIDEOS_READ, it) },
             )
+            HorizontalDivider()
+            CapabilityRow(
+                title = "Bildschirm zeigen",
+                description = "Erlaubt dem Control Center, um eine Übertragung zu bitten. Jede " +
+                    "einzelne Übertragung fragt danach noch einmal hier und dann bei Android " +
+                    "nach - dieser Schalter startet nichts. Sichtbar wäre dann alles, was die " +
+                    "Anzeige zeigt. Kein Ton, keine Aufnahme, keine Fernsteuerung.",
+                checked = state.screenViewGrantedLocally,
+                onCheckedChange = { onCapabilityChanged(Capability.SCREEN_VIEW, it) },
+            )
         }
     }
 }

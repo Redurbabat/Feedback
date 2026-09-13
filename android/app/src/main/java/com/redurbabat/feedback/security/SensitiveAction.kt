@@ -48,6 +48,15 @@ enum class SensitiveAction(
         confirmLabel = "Freigeben",
         alwaysRequiresSecret = false,
     ),
+    GRANT_SCREEN_VIEW(
+        title = "Bildschirm freigeben",
+        description = "Das Control Center darf dann um eine Bildschirmuebertragung bitten. " +
+            "Jede einzelne Uebertragung fragt trotzdem noch einmal hier und danach bei Android " +
+            "nach - diese Freigabe startet nichts von selbst. Es wird nichts aufgezeichnet und " +
+            "kein Ton uebertragen. Zur Bestätigung PIN oder Passphrase eingeben.",
+        confirmLabel = "Freigeben",
+        alwaysRequiresSecret = true,
+    ),
     GRANT_FILES_READ(
         title = "Dateizugriff freigeben",
         description = "Das Control Center darf dann die Bereiche lesen und herunterladen, die du " +

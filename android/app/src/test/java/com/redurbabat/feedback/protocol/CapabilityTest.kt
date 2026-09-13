@@ -26,12 +26,13 @@ class CapabilityTest {
      * this list has to be edited deliberately - never to make a failing test pass.
      */
     @Test
-    fun exactlyTheFourReadCapabilitiesAreImplementedInV1() {
+    fun exactlyTheFiveImplementedCapabilitiesAreLiveInV1() {
         val implemented = setOf(
             Capability.SYSTEM_INFO,
             Capability.FILES_READ,
             Capability.MEDIA_PHOTOS_READ,
             Capability.MEDIA_VIDEOS_READ,
+            Capability.SCREEN_VIEW,
         )
         for (capability in Capability.values()) {
             assertEquals(
@@ -92,14 +93,31 @@ class CapabilityTest {
     @Test
     fun anUnimplementedCapabilityIsRefusedAsUnsupported() {
         val permission = EffectivePermission.evaluate(
-            capability = Capability.SCREEN_VIEW,
-            serverGranted = setOf(Capability.SCREEN_VIEW),
-            deviceGranted = setOf(Capability.SCREEN_VIEW),
-            osAvailable = setOf(Capability.SCREEN_VIEW),
-            sessionAuthorized = setOf(Capability.SCREEN_VIEW),
+            capability = Capability.SCREEN_CONTROL,
+            serverGranted = setOf(Capability.SCREEN_CONTROL),
+            deviceGranted = setOf(Capability.SCREEN_CONTROL),
+            osAvailable = setOf(Capability.SCREEN_CONTROL),
+            sessionAuthorized = setOf(Capability.SCREEN_CONTROL),
         )
         assertFalse("all four factors must still not be enough", permission.effective)
         assertEquals(ProtocolError.UNSUPPORTED, permission.denialReason())
+    }
+
+    /**
+     * Section 8.5: seeing the screen and controlling it are separate capabilities, and only the
+     * first one exists. A grant of `screen.view` must never be a way into `screen.control` - that
+     * is the line between watching and operating somebody's phone.
+     */
+    @Test
+    fun viewingTheScreenDoesNotImplyControllingIt() {
+        val control = EffectivePermission.evaluate(
+            capability = Capability.SCREEN_CONTROL,
+            serverGranted = setOf(Capability.SCREEN_VIEW),
+            deviceGranted = setOf(Capability.SCREEN_VIEW),
+            osAvailable = setOf(Capability.SCREEN_VIEW, Capability.SCREEN_CONTROL),
+            sessionAuthorized = setOf(Capability.SCREEN_VIEW, Capability.SCREEN_CONTROL),
+        )
+        assertFalse("view must not imply control", control.effective)
     }
 
     @Test

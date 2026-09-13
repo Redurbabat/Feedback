@@ -23,6 +23,7 @@ import com.redurbabat.feedback.pairing.ServerPairingSession
 import com.redurbabat.feedback.pairing.ServerPairingStatus
 import com.redurbabat.feedback.permissions.LocalCapabilityStore
 import com.redurbabat.feedback.protocol.Capability
+import com.redurbabat.feedback.screen.AndroidScreenCapture
 import com.redurbabat.feedback.security.AppLockPolicy
 import com.redurbabat.feedback.security.AppLockReauthPolicy
 import com.redurbabat.feedback.security.AppLockSettings
@@ -84,6 +85,7 @@ data class FeedbackUiState(
     val filesReadGrantedLocally: Boolean = false,
     val mediaPhotosGrantedLocally: Boolean = false,
     val mediaVideosGrantedLocally: Boolean = false,
+    val screenViewGrantedLocally: Boolean = false,
     /** Wire form only: the local content URI of a share never enters UI state. */
     val fileShares: List<FileShare> = emptyList(),
     /** Areas Android no longer honours. Counted so the owner sees that a share stopped working. */
@@ -536,6 +538,8 @@ class FeedbackController(
                 applyCapabilityGrant(Capability.MEDIA_PHOTOS_READ, true)
             SensitiveAction.GRANT_MEDIA_VIDEOS ->
                 applyCapabilityGrant(Capability.MEDIA_VIDEOS_READ, true)
+            SensitiveAction.GRANT_SCREEN_VIEW ->
+                applyCapabilityGrant(Capability.SCREEN_VIEW, true)
         }
     }
 
@@ -736,6 +740,7 @@ class FeedbackController(
         Capability.FILES_READ -> SensitiveAction.GRANT_FILES_READ
         Capability.MEDIA_PHOTOS_READ -> SensitiveAction.GRANT_MEDIA_PHOTOS
         Capability.MEDIA_VIDEOS_READ -> SensitiveAction.GRANT_MEDIA_VIDEOS
+        Capability.SCREEN_VIEW -> SensitiveAction.GRANT_SCREEN_VIEW
         else -> null
     }
 
@@ -753,6 +758,7 @@ class FeedbackController(
                     _state.value.copy(mediaPhotosGrantedLocally = granted)
                 Capability.MEDIA_VIDEOS_READ ->
                     _state.value.copy(mediaVideosGrantedLocally = granted)
+                Capability.SCREEN_VIEW -> _state.value.copy(screenViewGrantedLocally = granted)
                 else -> _state.value
             }
             notifyAgentCapabilitiesChanged()
@@ -1035,6 +1041,7 @@ class FeedbackController(
             filesReadGrantedLocally = false,
             mediaPhotosGrantedLocally = false,
             mediaVideosGrantedLocally = false,
+            screenViewGrantedLocally = false,
             fileShares = emptyList(),
             fileSharesUnavailable = 0,
             globalMessage = "Lokale Kopplung entfernt und alle Dateifreigaben aufgehoben. " +
@@ -1087,6 +1094,8 @@ class FeedbackController(
                 localCapabilityStore.granted().contains(Capability.MEDIA_PHOTOS_READ),
             mediaVideosGrantedLocally =
                 localCapabilityStore.granted().contains(Capability.MEDIA_VIDEOS_READ),
+            screenViewGrantedLocally =
+                localCapabilityStore.granted().contains(Capability.SCREEN_VIEW),
             appLockConfigured = appLockConfigured,
             // An unlocked session is process local and is never restored after a restart.
             appUnlocked = AutoLockPolicy.shouldLockOnStart(appLockConfigured).not(),
@@ -1216,6 +1225,8 @@ class FeedbackController(
             systemInfoProvider = systemInfoProvider,
             registrationStore = registrationStore,
             filesHandler = FilesAgentFactory.create(applicationContext, secretStore),
+            screenCapture = AndroidScreenCapture(applicationContext),
+            displaySize = { AndroidScreenCapture.displaySize(applicationContext) },
         )
         agent = next
         agentStateJob = scope.launch {
