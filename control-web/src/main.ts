@@ -72,6 +72,13 @@ class ControlCenterApp {
     controller: AbortController;
     decoder: VideoDecoder | null;
     endedBecause: ScreenStopReason | null;
+    /**
+     * Set when this side gave up rather than the device.
+     *
+     * Without it a decoding failure in the browser was reported as "the device's encoder gave
+     * up", which sends whoever reads it looking at the wrong machine.
+     */
+    endedLocally: string | null;
   } | null = null;
   /**
    * Held across renders rather than rebuilt with the rest of the view.
@@ -667,7 +674,13 @@ class ControlCenterApp {
     }
 
     const toolbar = div('row-between align-start');
-    toolbar.append(text('span', this.screenPhaseLine(active.phase, active.endedBecause), 'muted small'));
+    toolbar.append(
+      text(
+        'span',
+        this.screenPhaseLine(active.phase, active.endedBecause, active.endedLocally),
+        'muted small',
+      ),
+    );
     const controls = div('row-gap');
     if (active.phase === 'streaming') {
       const refresh = button('Bild auffrischen', 'ghost small-button');
@@ -692,6 +705,7 @@ class ControlCenterApp {
   private screenPhaseLine(
     phase: 'awaiting_consent' | 'granted' | 'streaming' | 'ended',
     endedBecause: ScreenStopReason | null,
+    endedLocally: string | null,
   ): string {
     switch (phase) {
       case 'awaiting_consent':
@@ -701,6 +715,9 @@ class ControlCenterApp {
       case 'streaming':
         return 'Übertragung läuft. Am Gerät ist sie sichtbar und dort jederzeit zu stoppen.';
       case 'ended':
+        if (endedLocally !== null) {
+          return endedLocally;
+        }
         return endedBecause === null ? 'Beendet.' : stopReasonLine(endedBecause);
     }
   }
@@ -734,6 +751,7 @@ class ControlCenterApp {
         controller,
         decoder: null,
         endedBecause: null,
+        endedLocally: null,
       };
       this.busy = false;
       this.render();
@@ -813,34 +831,51 @@ class ControlCenterApp {
       return;
     }
     active.decoder?.close();
+
+    const decoderConfig: VideoDecoderConfig = {
+      codec: config.codec,
+      codedWidth: config.width,
+      codedHeight: config.height,
+      optimizeForLatency: true,
+    };
+
+    /*
+     * Asked separately, because configure() does not always complain.
+     *
+     * A Chromium without proprietary codecs accepts the configuration and then simply never
+     * produces a frame: the canvas stays black and neither the error callback nor the summary
+     * line says why. Found by actually looking at a screenshot of this view.
+     */
+    void VideoDecoder.isConfigSupported(decoderConfig).then(
+      (support) => {
+        if (support.supported === true || this.screen !== active || active.phase === 'ended') {
+          return;
+        }
+        this.finishScreen(
+          'client_cancelled',
+          `Dieser Browser kann ${config.codec} nicht dekodieren. Ein aktueller Chrome oder Edge kann es.`,
+        );
+      },
+      () => undefined,
+    );
     const decoder = new VideoDecoder({
       output: (frame) => this.drawFrame(frame),
       error: () => {
-        this.message = {
-          kind: 'error',
-          text: 'Der Bildstrom konnte nicht dekodiert werden.',
-        };
-        this.finishScreen('encoder_error');
+        this.finishScreen('client_cancelled', 'Der Bildstrom konnte hier nicht dekodiert werden.');
       },
     });
     try {
       // No `description`: the device sends Annex-B and repeats SPS/PPS before every
       // keyframe, which is what lets a viewer resynchronise after a lost frame.
-      decoder.configure({
-        codec: config.codec,
-        codedWidth: config.width,
-        codedHeight: config.height,
-        optimizeForLatency: true,
-      });
+      decoder.configure(decoderConfig);
     } catch {
       // The browser has WebCodecs but not this profile. Naming the codec is the only
       // way the owner can tell that from a broken connection.
       decoder.close();
-      this.message = {
-        kind: 'error',
-        text: `Dieser Browser kann ${config.codec} nicht dekodieren.`,
-      };
-      this.finishScreen('encoder_error');
+      this.finishScreen(
+        'client_cancelled',
+        `Dieser Browser kann ${config.codec} nicht dekodieren.`,
+      );
       return;
     }
     active.decoder = decoder;
@@ -872,6 +907,19 @@ class ControlCenterApp {
       }
       return;
     }
+  }
+
+  /**
+   * Counts frames that were actually decoded and drawn.
+   *
+   * Counting the ones handed to the decoder instead would have the summary claim "1 Bild
+   * empfangen" under a canvas that is still black - which is exactly what it did before.
+   */
+  private countDecodedFrame(): void {
+    const active = this.screen;
+    if (active === null) {
+      return;
+    }
     active.frames += 1;
     // Updated in place rather than through render(): at fifteen frames a second a
     // full rebuild of the page would be the most expensive thing in the browser.
@@ -886,6 +934,7 @@ class ControlCenterApp {
       const context = canvas?.getContext('2d') ?? null;
       if (canvas !== null && context !== null) {
         context.drawImage(frame, 0, 0, canvas.width, canvas.height);
+        this.countDecodedFrame();
       }
     } finally {
       // Not optional: an unclosed VideoFrame holds a decoder buffer, and a few
@@ -930,14 +979,21 @@ class ControlCenterApp {
     }
   }
 
-  /** Ends the stream on this side and leaves the reason on screen. */
-  private finishScreen(reason: ScreenStopReason): void {
+  /**
+   * Ends the stream on this side and leaves the reason on screen.
+   *
+   * `localReason` is for the cases this side caused: the protocol still says
+   * `client_cancelled`, because from the device's point of view that is what happened, but the
+   * viewer is told the truth rather than being pointed at the phone.
+   */
+  private finishScreen(reason: ScreenStopReason, localReason: string | null = null): void {
     const active = this.screen;
     if (active === null || active.phase === 'ended') {
       return;
     }
     active.phase = 'ended';
     active.endedBecause = reason;
+    active.endedLocally = localReason;
     active.decoder?.close();
     active.decoder = null;
     active.controller.abort();
