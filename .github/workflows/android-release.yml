@@ -1,0 +1,176 @@
+name: Android Release APK
+
+# Veroeffentlicht die gebaute APK als GitHub-Release mit festem Tag, damit sie
+# direkt auf dem Handy heruntergeladen werden kann - ohne PC und ohne Anmeldung
+# an der Actions-Oberflaeche.
+#
+# Warum eine STABILE Signatur sicherheitsrelevant ist:
+# Wechselt der Signaturschluessel zwischen zwei Builds, verlangt Android vor dem
+# Update eine Deinstallation. Eine Deinstallation loescht den Android-Keystore-
+# Schluessel dieser App - und damit die Geraeteidentitaet und die bestehende
+# Kopplung. Jedes Update wuerde also ein neues Pairing erzwingen. Deshalb wird
+# mit einem festen Schluessel aus dem Secret Store signiert, sobald er hinterlegt ist.
+#
+# Signaturmaterial liegt NIE im Repository (FEEDBACK_CONSTITUTION.md Punkt 6).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "android/**"
+      - ".github/workflows/android-release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    env:
+      # Ohne hinterlegte Secrets bleiben diese Werte leer. Der Build laeuft dann
+      # bewusst mit der Standard-Debug-Signatur durch - und der Releasetext sagt
+      # ausdruecklich, was das fuer Updates bedeutet. Es gibt KEINEN Ersatz-
+      # Passwort-Fallback aus oeffentlichen Repository-Daten.
+      FEEDBACK_KEYSTORE_B64: ${{ secrets.FEEDBACK_KEYSTORE_B64 }}
+      FEEDBACK_KEYSTORE_FILE: ${{ github.workspace }}/android/app/feedback-signing.p12
+      FEEDBACK_STORE_PASSWORD: ${{ secrets.FEEDBACK_STORE_PASSWORD }}
+      FEEDBACK_KEY_PASSWORD: ${{ secrets.FEEDBACK_KEY_PASSWORD }}
+      FEEDBACK_KEY_ALIAS: ${{ secrets.FEEDBACK_KEY_ALIAS }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up current Android SDK tools
+        uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: "15859902"
+
+      - name: Install Android SDK
+        run: sdkmanager "platforms;android-36.1" "build-tools;36.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.6.0"
+
+      - name: Signaturschluessel aus Secret schreiben
+        id: signing
+        run: |
+          set -euo pipefail
+          if [ -n "${FEEDBACK_KEYSTORE_B64}" ] \
+             && [ -n "${FEEDBACK_STORE_PASSWORD}" ] \
+             && [ -n "${FEEDBACK_KEY_PASSWORD}" ] \
+             && [ -n "${FEEDBACK_KEY_ALIAS}" ]; then
+            mkdir -p "$(dirname "$FEEDBACK_KEYSTORE_FILE")"
+            printf '%s' "$FEEDBACK_KEYSTORE_B64" | base64 -d > "$FEEDBACK_KEYSTORE_FILE"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            echo "Fester Signaturschluessel aus dem Secret Store uebernommen."
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "Kein vollstaendiges Signatur-Secret hinterlegt - Build nutzt die Standard-Debug-Signatur."
+          fi
+
+      - name: Unit-Tests
+        working-directory: android
+        run: gradle :app:testDebugUnitTest --stacktrace
+
+      - name: Debug-APK bauen
+        working-directory: android
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Signatur-Fingerabdruck protokollieren
+        if: steps.signing.outputs.signed == 'true'
+        run: |
+          set -euo pipefail
+          keytool -list -keystore "$FEEDBACK_KEYSTORE_FILE" -storetype PKCS12 \
+            -storepass "$FEEDBACK_STORE_PASSWORD" -alias "$FEEDBACK_KEY_ALIAS" \
+            | grep -i "SHA256" || true
+
+      - name: APK benennen
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk Feedback.apk
+
+      - name: Signaturmaterial wieder entfernen
+        if: always()
+        run: rm -f "$FEEDBACK_KEYSTORE_FILE"
+
+      - name: Release veroeffentlichen (feste Signatur)
+        if: steps.signing.outputs.signed == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk
+          name: "Feedback - Android-App"
+          body: |
+            Aktuelle Debug-APK von Feedback, automatisch aus `main` gebaut.
+
+            **Was Feedback ist:** eine Verwaltungs-App fuer eigene bzw. ausdruecklich
+            autorisierte Geraete. Kopplung erfolgt sichtbar und bestaetigt, Faehigkeiten
+            werden einzeln freigegeben und sind jederzeit widerrufbar.
+
+            **Was Feedback nicht ist:** kein verstecktes Ueberwachungswerkzeug. Die App
+            tarnt sich nicht, umgeht keine Android-Berechtigungsdialoge und aktiviert
+            weder Kamera noch Mikrofon.
+
+            **Installation auf dem Handy:**
+            1. Diese Seite auf dem Handy oeffnen und `Feedback.apk` herunterladen.
+            2. Die Datei antippen, Installation aus unbekannten Quellen einmalig erlauben, installieren.
+            3. App oeffnen. Beim ersten Start entsteht die Geraeteidentitaet im Android Keystore.
+
+            Diese Version ist mit einem festen Schluessel signiert. Updates lassen sich
+            deshalb ueber die installierte App druebersetzen, ohne sie zu deinstallieren -
+            die Geraeteidentitaet und eine bestehende Kopplung bleiben erhalten.
+          files: Feedback.apk
+
+      - name: Release veroeffentlichen (ohne festen Schluessel)
+        if: steps.signing.outputs.signed != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk
+          name: "Feedback - Android-App"
+          body: |
+            Aktuelle Debug-APK von Feedback, automatisch aus `main` gebaut.
+
+            **Was Feedback ist:** eine Verwaltungs-App fuer eigene bzw. ausdruecklich
+            autorisierte Geraete. Kopplung erfolgt sichtbar und bestaetigt, Faehigkeiten
+            werden einzeln freigegeben und sind jederzeit widerrufbar.
+
+            **Was Feedback nicht ist:** kein verstecktes Ueberwachungswerkzeug. Die App
+            tarnt sich nicht, umgeht keine Android-Berechtigungsdialoge und aktiviert
+            weder Kamera noch Mikrofon.
+
+            **Installation auf dem Handy:**
+            1. Diese Seite auf dem Handy oeffnen und `Feedback.apk` herunterladen.
+            2. Die Datei antippen, Installation aus unbekannten Quellen einmalig erlauben, installieren.
+            3. App oeffnen. Beim ersten Start entsteht die Geraeteidentitaet im Android Keystore.
+
+            **Wichtig:** Fuer dieses Repository ist noch kein fester Signaturschluessel
+            hinterlegt. Die APK traegt deshalb eine Signatur, die sich zwischen Builds
+            aendern kann. Android verlangt dann vor einem Update eine Deinstallation -
+            und eine Deinstallation loescht den Geraeteschluessel im Android Keystore.
+            Geraeteidentitaet und Kopplung gehen dabei verloren und muessen neu eingerichtet werden.
+
+            Abhilfe: die Secrets `FEEDBACK_KEYSTORE_B64`, `FEEDBACK_STORE_PASSWORD`,
+            `FEEDBACK_KEY_PASSWORD` und `FEEDBACK_KEY_ALIAS` im Repository hinterlegen.
+            Siehe `docs/deployment/ANDROID_RELEASE.md`.
+          files: Feedback.apk
+
+      - name: APK zusaetzlich als Build-Artefakt sichern
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: feedback-release-apk
+          path: Feedback.apk
+          if-no-files-found: ignore
+          retention-days: 14
