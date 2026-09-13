@@ -1,0 +1,36 @@
+# Android / Gradle
+.gradle/
+**/build/
+local.properties
+*.iml
+.idea/
+
+# Signing / secrets
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+secrets.properties
+
+# Node / web (future)
+node_modules/
+dist/
+coverage/
+
+# Server/runtime
+*.log
+.tmp/
+tmp/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Test artifacts
+artifacts/
+screenshots/
