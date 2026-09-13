@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
 import cookie from '@fastify/cookie';
+import websocket from '@fastify/websocket';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 
-import { MAX_JSON_BODY_BYTES } from '../constants.js';
+import { MAX_FRAME_BYTES, MAX_JSON_BODY_BYTES } from '../constants.js';
 import type { AppContext } from '../context.js';
 import { ProtocolError } from '../errors.js';
 import { errorBody, sendProtocolError, toProtocolError } from './errorHandler.js';
@@ -69,6 +70,14 @@ export async function buildApp(context: AppContext): Promise<FastifyInstance> {
   });
 
   await app.register(cookie);
+  // Register before routes so upgrade handling and route hooks are installed
+  // for every WebSocket endpoint. `ws` enforces the protocol frame limit too.
+  await app.register(websocket, {
+    options: {
+      maxPayload: MAX_FRAME_BYTES,
+      perMessageDeflate: false,
+    },
+  });
 
   app.decorate('appContext', context);
 
@@ -92,7 +101,8 @@ export async function buildApp(context: AppContext): Promise<FastifyInstance> {
     await reply.code(204).send();
   });
 
-  // Per-IP rate limit using the bucket configured on the route.
+  // Per-IP rate limit using the bucket configured on the route. This covers
+  // the WebSocket upgrade as well; per-frame validation happens in agent.ts.
   app.addHook('onRequest', async (request) => {
     if (!request.url.startsWith(API_PREFIX)) {
       return;

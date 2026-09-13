@@ -60,5 +60,15 @@ export async function requireDeviceToken(
   await context.repositories.deviceTokens.touch(token.id, now);
   await context.repositories.devices.touchLastSeen(device.id, now);
 
-  return { device, token, authenticatedAt: now };
+  const principal = { device, token, authenticatedAt: now } satisfies DevicePrincipal;
+  request.devicePrincipal = principal;
+  return principal;
+}
+
+export function requireDevicePrincipal(request: FastifyRequest): DevicePrincipal {
+  const principal = request.devicePrincipal;
+  if (principal === undefined) {
+    throw new ProtocolError('UNAUTHORIZED', 'Kein gueltiges Geraete-Token');
+  }
+  return principal;
 }

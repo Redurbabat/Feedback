@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 
@@ -5,6 +7,7 @@ import {
   HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_MISS_LIMIT,
   IMPLEMENTED_CAPABILITIES_V1,
+  PROTOCOL_VERSION,
 } from '../../constants.js';
 import type { AppContext } from '../../context.js';
 import type { DeviceCapabilityRecord, DeviceRecord } from '../../db/repositories/types.js';
@@ -39,8 +42,14 @@ function toIso(value: number | null): string | null {
   return value === null ? null : new Date(value).toISOString();
 }
 
-function isOnline(device: DeviceRecord, now: number): boolean {
-  if (device.revokedAt !== null || device.lastSeenAt === null) {
+function isOnline(device: DeviceRecord, now: number, activelyConnected: boolean): boolean {
+  if (device.revokedAt !== null) {
+    return false;
+  }
+  if (activelyConnected) {
+    return true;
+  }
+  if (device.lastSeenAt === null) {
     return false;
   }
   return now - device.lastSeenAt <= HEARTBEAT_INTERVAL_MS * HEARTBEAT_MISS_LIMIT;
@@ -56,6 +65,7 @@ function grantedCapabilities(entries: readonly DeviceCapabilityRecord[]): readon
 }
 
 function toDeviceView(
+  context: AppContext,
   device: DeviceRecord,
   capabilities: readonly DeviceCapabilityRecord[],
   now: number,
@@ -73,9 +83,20 @@ function toDeviceView(
     updatedAt: new Date(device.updatedAt).toISOString(),
     lastSeenAt: toIso(device.lastSeenAt),
     revokedAt: toIso(device.revokedAt),
-    online: isOnline(device, now),
+    online: isOnline(device, now, context.agentConnections.isConnected(device.id)),
     serverGrantedCapabilities: grantedCapabilities(capabilities),
   };
+}
+
+function agentFrame(type: string, payload: Record<string, unknown>, now: number): string {
+  return JSON.stringify({
+    version: PROTOCOL_VERSION,
+    type,
+    messageId: randomUUID(),
+    sessionId: null,
+    timestamp: new Date(now).toISOString(),
+    payload,
+  });
 }
 
 async function requireOwnedDevice(
@@ -121,6 +142,7 @@ export async function registerDeviceRoutes(
     const views = await Promise.all(
       devices.map(async (device) =>
         toDeviceView(
+          context,
           device,
           await context.repositories.deviceCapabilities.listForDevice(device.id),
           now,
@@ -135,7 +157,7 @@ export async function registerDeviceRoutes(
     const params = parseOrThrow(paramsSchema, request.params);
     const device = await requireOwnedDevice(context, principal.user.id, params.id);
     const capabilities = await context.repositories.deviceCapabilities.listForDevice(device.id);
-    return toDeviceView(device, capabilities, context.clock.now());
+    return toDeviceView(context, device, capabilities, context.clock.now());
   });
 
   app.put('/devices/:id/capabilities', async (request, reply) => {
@@ -171,9 +193,20 @@ export async function registerDeviceRoutes(
     });
 
     const updated = await context.repositories.deviceCapabilities.listForDevice(device.id);
+    const serverGranted = grantedCapabilities(updated);
+    const now = context.clock.now();
+    context.agentConnections.sendToDevice(
+      device.id,
+      agentFrame(
+        'capability.update',
+        { serverGrantedCapabilities: serverGranted },
+        now,
+      ),
+    );
+
     return {
       deviceId: device.id,
-      serverGrantedCapabilities: grantedCapabilities(updated),
+      serverGrantedCapabilities: serverGranted,
     };
   });
 
@@ -185,10 +218,19 @@ export async function registerDeviceRoutes(
     const device = await requireOwnedDevice(context, principal.user.id, params.id);
     const now = context.clock.now();
 
+    // Inform a currently connected device before invalidating its token and
+    // closing all agent sockets. This is advisory; revocation is enforced by
+    // the database/token checks even if delivery fails.
+    context.agentConnections.sendToDevice(
+      device.id,
+      agentFrame('device.revoked', { reason: 'revoked_by_owner' }, now),
+    );
+
     await context.repositories.devices.revoke(device.id, now);
     await context.repositories.deviceTokens.revokeAllForDevice(device.id, now);
     await context.repositories.remoteSessions.revokeAllForDevice(device.id, now);
     await context.repositories.deviceCapabilities.clearForDevice(device.id);
+    context.agentConnections.closeDevice(device.id, 4003, 'device revoked');
 
     await context.audit.record({
       eventType: 'device.revoke',
