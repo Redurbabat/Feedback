@@ -9,7 +9,9 @@ import type { AppContext } from '../context.js';
 import { ProtocolError } from '../errors.js';
 import { errorBody, sendProtocolError, toProtocolError } from './errorHandler.js';
 import { RATE_LIMITS } from './rateLimit.js';
+import { registerAgentRoutes } from './routes/agent.js';
 import { registerAuthRoutes } from './routes/auth.js';
+import { registerDeviceRoutes } from './routes/devices.js';
 import { registerPairingRoutes } from './routes/pairing.js';
 import { routeRateLimitName } from './requestContext.js';
 import { applyCorsHeaders, applySecurityHeaders, isAllowedOrigin } from './security.js';
@@ -123,6 +125,8 @@ export async function buildApp(context: AppContext): Promise<FastifyInstance> {
     async (instance) => {
       await registerAuthRoutes(instance, context);
       await registerPairingRoutes(instance, context);
+      await registerAgentRoutes(instance, context);
+      await registerDeviceRoutes(instance, context);
     },
     { prefix: API_PREFIX },
   );

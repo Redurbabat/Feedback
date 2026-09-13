@@ -16,6 +16,7 @@ export const AUDIT_EVENT_TYPES = [
   'pairing.approve',
   'pairing.reject',
   'pairing.claim',
+  'device.capabilities.update',
   'device.revoke',
 ] as const;
 
