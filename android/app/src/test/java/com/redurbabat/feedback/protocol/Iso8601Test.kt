@@ -24,7 +24,7 @@ class Iso8601Test {
         val previousLocale = Locale.getDefault()
         val previousZone = TimeZone.getDefault()
         try {
-            Locale.setDefault(Locale("ar", "EG"))
+            Locale.setDefault(Locale.forLanguageTag("ar-EG"))
             TimeZone.setDefault(TimeZone.getTimeZone("Asia/Tokyo"))
             assertEquals("2025-09-13T10:40:00.000Z", Iso8601.format(1_757_760_000_000L))
             assertEquals(1_757_760_000_000L, Iso8601.parse("2025-09-13T10:40:00.000Z"))

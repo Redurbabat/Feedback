@@ -3,27 +3,31 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-// Release signing must stay reproducible across updates: a changed signing key forces an
-// uninstall, and an uninstall destroys the Android Keystore key - which means device identity
-// and pairing are lost. The keystore location and its passwords therefore come from Gradle
-// properties or environment variables only. Nothing is ever read from repository content, and
-// there is no fallback password. When anything is missing the build simply falls back to the
-// default debug signing, which keeps CI working without secrets.
+// Signing must stay reproducible across updates: a changed signing key forces an uninstall, and
+// an uninstall destroys the Android Keystore key - which means device identity and pairing are
+// lost. The keystore location and its passwords therefore come from Gradle properties or
+// environment variables only. Nothing is ever read from repository content, and there is no
+// fallback password. When anything is missing, no fixed signing config is created at all and the
+// build falls back to the default debug signing, which keeps CI working without secrets.
+//
+// The config is applied to debug as well, because the published artifact is the debug APK.
 val signingValue: (String) -> String? = { name ->
     (project.findProperty(name) as? String)?.takeIf { it.isNotBlank() }
         ?: System.getenv(name)?.takeIf { it.isNotBlank() }
 }
 
-val releaseKeystoreFile = signingValue("FEEDBACK_KEYSTORE_FILE")?.let { rootProject.file(it) }
-val releaseStorePassword = signingValue("FEEDBACK_STORE_PASSWORD")
-val releaseKeyPassword = signingValue("FEEDBACK_KEY_PASSWORD")
-val releaseKeyAlias = signingValue("FEEDBACK_KEY_ALIAS")
+val feedbackKeystoreFile = signingValue("FEEDBACK_KEYSTORE_FILE")?.let { rootProject.file(it) }
+val feedbackStorePassword = signingValue("FEEDBACK_STORE_PASSWORD")
+val feedbackKeyPassword = signingValue("FEEDBACK_KEY_PASSWORD")
+val feedbackKeyAlias = signingValue("FEEDBACK_KEY_ALIAS")
 
-val releaseSigningAvailable = releaseKeystoreFile != null &&
-    releaseKeystoreFile.isFile &&
-    releaseStorePassword != null &&
-    releaseKeyPassword != null &&
-    releaseKeyAlias != null
+// No smart cast is relied on here: script level declarations are properties, not locals.
+val stableSigningAvailable = feedbackKeystoreFile?.isFile == true &&
+    feedbackStorePassword != null &&
+    feedbackKeyPassword != null &&
+    feedbackKeyAlias != null
+
+val stableSigningConfigName = "feedbackStable"
 
 android {
     namespace = "com.redurbabat.feedback"
@@ -42,20 +46,25 @@ android {
     }
 
     signingConfigs {
-        if (releaseSigningAvailable) {
-            create("release") {
-                storeFile = releaseKeystoreFile
-                storePassword = releaseStorePassword
-                keyAlias = releaseKeyAlias
-                keyPassword = releaseKeyPassword
+        if (stableSigningAvailable) {
+            create(stableSigningConfigName).apply {
+                storeFile = feedbackKeystoreFile
+                storePassword = feedbackStorePassword
+                keyAlias = feedbackKeyAlias
+                keyPassword = feedbackKeyPassword
             }
         }
     }
 
     buildTypes {
+        debug {
+            if (stableSigningAvailable) {
+                signingConfig = signingConfigs.getByName(stableSigningConfigName)
+            }
+        }
         release {
-            if (releaseSigningAvailable) {
-                signingConfig = signingConfigs.getByName("release")
+            if (stableSigningAvailable) {
+                signingConfig = signingConfigs.getByName(stableSigningConfigName)
             }
             isMinifyEnabled = false
             proguardFiles(
