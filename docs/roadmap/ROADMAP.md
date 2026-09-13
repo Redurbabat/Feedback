@@ -7,6 +7,7 @@
 - [x] Vision, Architektur und Security Model
 - [x] Android-Grundprojekt
 - [x] CI-Build fuer Android
+- [x] CI fuer Server und Control Web
 
 ## Phase 1 - Lokale Android-Basis
 
@@ -14,32 +15,37 @@
 - [ ] lokaler App-Lock
 - [x] Android-Keystore-Identitaet
 - [x] Device-ID/Fingerprint
-- [ ] Berechtigungszentrale
-- [ ] sauberer Hintergrund-Lifecycle
+- [x] Berechtigungszentrale fuer implementierte Capabilities (`system.info`)
+- [x] explizit aktivierbare sichtbare Hintergrundverbindung als Foreground Service
+- [ ] physischer Langzeit-/Akku-Test des Hintergrund-Lifecycles auf Android 8 bis 16
 
 ## Phase 2 - Pairing und Presence
 
-- [ ] Server-Grundprojekt
-- [ ] Control-Web-Grundprojekt
-- [ ] kurzlebige Pairing-Tickets
-- [ ] QR-Code und Zahlencode
-- [ ] Public-Key-Registrierung
-- [ ] Online/Offline/Last-Seen
-- [ ] Geraet widerrufen
+- [x] Server-Grundprojekt
+- [x] Control-Web-Grundprojekt
+- [x] kurzlebige Pairing-Tickets und getrenntes Device-Secret
+- [x] sechsstelliger Zahlencode mit Limits und kurzer TTL
+- [ ] QR-Code in Android sichtbar rendern bzw. scannen
+- [x] Public-Key-Registrierung und signierter Claim
+- [x] verschluesseltes lokales Device-Token
+- [x] authentifizierter Agent-WebSocket mit Heartbeat
+- [x] Online/Offline/Last-Seen
+- [x] Geraet widerrufen und aktive Verbindung beenden
 
 ## Phase 3 - Sichere Basisfunktionen
 
-- [ ] Systeminformationen
-- [ ] Akku/Speicher/OS
+- [x] Live-Systeminformationen ueber kurzlebige Remote-Session
+- [x] Akku/Speicher/OS/Netzwerktyp
+- [x] getrennte Server- und lokale Freigabe fuer `system.info`
 - [ ] explizit freigegebene Dateien
 - [ ] Fotos/Videos ueber Android APIs
-- [ ] Transfer-Limits und Backpressure
-- [ ] Audit-Ereignisse
+- [ ] Transfer-Limits und Backpressure fuer Datei-/Medientransfer
+- [x] Audit-Ereignisse fuer Pairing, Freigaben, Systeminfo und Widerruf
 
 ## Phase 4 - Bildschirm
 
-- [ ] MediaProjection-Flow
-- [ ] sichtbare Session-Anzeige
+- [ ] MediaProjection-Flow mit Android-Systemdialog pro erforderlicher Sitzung
+- [ ] sichtbare Session-Anzeige und lokaler Stop
 - [ ] Video-Encoding
 - [ ] WebRTC-Transport
 - [ ] Session-Ende/Widerruf
@@ -61,6 +67,20 @@
 - [ ] Dateien und Systeminformationen
 - [ ] Installer und Updates
 
+## Aktueller MVP-Schnitt
+
+Der aktuelle MVP koppelt einen Android-Agenten kryptografisch an das Control Center, haelt
+Presence ueber HTTPS/WSS, kann `system.info` nur bei lokaler **und** serverseitiger Freigabe live
+abfragen, protokolliert sicherheitsrelevante Aktionen und kann ein Geraet widerrufen.
+
+Die Hintergrundverbindung ist ausdruecklich opt-in und verwendet einen sichtbaren Android
+Foreground Service mit dauerhafter Benachrichtigung und Beenden-Aktion. Sie startet nicht heimlich
+ueber einen Boot-Receiver. Fuer eine produktive Freigabe bleiben physische Tests auf mehreren
+Android-Versionen sowie die Distributions-/Store-Policy-Pruefung des `specialUse`-FGS-Typs offen.
+
 ## Release-Gate
 
-Vor jeder produktiven Remote-Control-Version muessen Threat Model, Pairing-Tests, Widerruf, Session-Timeout, physischer Geraetetest und sichtbarer lokaler Stop erfolgreich sein.
+Vor jeder produktiven Remote-Control-Version muessen Threat Model, Pairing-Tests, Widerruf,
+Session-Timeout, physischer Geraetetest und sichtbarer lokaler Stop erfolgreich sein. Bildschirm-
+oder Input-Funktionen duerfen erst dann als fertig markiert werden, wenn die erforderlichen Android-
+Systemfreigaben und sichtbaren Sitzungsindikatoren real auf physischen Geraeten getestet wurden.
