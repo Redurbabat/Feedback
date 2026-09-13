@@ -1,17 +1,14 @@
-# Laeuft, sobald server/ existiert. Der Pfadfilter nennt bewusst NUR
-# server/**: sonst wuerde bereits das Anlegen dieser Workflow-Datei einen
-# Lauf gegen eine noch nicht vorhandene Komponente ausloesen. Sobald
-# server/ steht, wird '.github/workflows/server-ci.yml' wieder mit aufgenommen,
-# damit auch Aenderungen am Workflow selbst geprueft werden.
 name: Server CI
 
 on:
   push:
     paths:
       - "server/**"
+      - ".github/workflows/server-ci.yml"
   pull_request:
     paths:
       - "server/**"
+      - ".github/workflows/server-ci.yml"
 
 permissions:
   contents: read
