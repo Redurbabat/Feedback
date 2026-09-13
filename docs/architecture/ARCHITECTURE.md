@@ -28,7 +28,7 @@ Die Android-App ist nativ und besteht aus klar getrennten Modulen:
 - `security`: Keystore, PIN/Session Lock, lokale Schluessel
 - `pairing`: Einladung/Antwort, Device Registration
 - `agent`: Lifecycle und Hintergrundzustand
-- `network`: API, WebSocket und spaeter WebRTC
+- `network`: API und WebSocket (kein WebRTC, siehe ADR-004)
 - `device`: Akku, Speicher, OS-/Geraeteinformationen
 - `files`: explizit freigegebener Dateizugriff
 - `media`: Fotos/Videos ueber passende Android APIs
@@ -72,12 +72,19 @@ Phase 1 nutzt HTTPS/WSS fuer Pairing, Presence und Control-Metadaten. Dateiinhal
 dieselbe Strecke: das Geraet streamt Chunks ueber seine WebSocket-Verbindung, der Server reicht sie
 an die HTTP-Antwort des Control Centers weiter und speichert sie nicht.
 
-Fuer Bildschirm und Medien ist spaeter WebRTC vorgesehen. Dabei gilt Punkt 13 unveraendert: eine
-direkte Peer-Strecke ist eine Latenz-Optimierung, nicht die Voraussetzung. Ein STUN/TURN-Pfad
-gehoert deshalb zur Mindestausstattung dieses Milestones und nicht in eine spaetere Ausbaustufe -
-zwischen zwei Mobilfunknetzen oder hinter symmetrischem NAT scheitert eine reine Peer-Verbindung
-regelmaessig. Was ein Relay sieht und was er nicht speichert, wird vor der Einfuehrung im Threat
-Model behandelt.
+Der Bildschirmstrom nimmt denselben Weg: das Geraet kodiert mit `MediaCodec`, schickt die Frames
+in Stuecken ueber seine WebSocket-Verbindung, und der Server reicht sie als Server-Sent Events an
+das Control Center weiter, ohne sie zu speichern.
+
+**WebRTC, STUN und TURN sind kein Bestandteil von v1.** Die frueher hier vorgesehene Peer-Strecke
+haette gegen den eigentlichen Gegner nichts gebracht: DTLS-SRTP schuetzt gegen ein fremdes Relay,
+aber die Fingerprints laufen ueber die Signalisierung - und die waere unser eigener Server. Die
+vollstaendige Begruendung steht in ADR-004, die Folge als Bedrohung 4.15 im Threat Model: der
+Serverbetreiber kann mitsehen, und der Widerrufspfad dagegen ist, den Server selbst zu betreiben.
+
+Punkt 13 gilt unveraendert und spricht hier sogar fuer den Serverpfad: eine direkte Peer-Strecke
+ist eine Latenz-Optimierung, nicht die Voraussetzung, und ein Strom ueber die ohnehin bestehende
+Agent-Verbindung funktioniert ueberall dort, wo die App funktioniert.
 
 ## Datenprinzip
 

@@ -71,8 +71,10 @@ darf voraussetzen, dass Control Center und Zielgeraet im selben LAN oder WLAN si
   und ohne Portfreigabe.
 - Keine Netzwerk-Discovery: kein mDNS/NSD, kein Subnetz-Scan, keine Annahme ueber private
   IP-Bereiche, keine Kopplung ueber "beide im selben WLAN".
-- Eine direkte Peer-Verbindung (spaeter WebRTC fuer Bildschirm und Medien) ist eine Optimierung der
+- Eine direkte Peer-Verbindung ist eine Optimierung der
   Latenz, niemals die Voraussetzung der Funktion. Kommt sie nicht zustande, muss ein Relay
   uebernehmen. Ein Feature, das nur im selben Netz funktioniert, gilt als nicht implementiert.
+  In v1 gibt es deshalb gar keine Peer-Strecke: auch der Bildschirmstrom laeuft ueber den Control
+  Server (ADR-004).
 - Cleartext-Abkuerzungen "weil es ja nur das Heimnetz ist" sind ausgeschlossen. Es gibt kein
   vertrauenswuerdiges Netz.

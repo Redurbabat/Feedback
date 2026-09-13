@@ -48,10 +48,11 @@
 
 ## Phase 4 - Bildschirm
 
+- [x] Protokoll-Abschnitt 8.5, Limits, Threat Model 4.15-4.18 und ADR-004
 - [ ] MediaProjection-Flow mit Android-Systemdialog pro erforderlicher Sitzung
 - [ ] sichtbare Session-Anzeige und lokaler Stop
 - [ ] Video-Encoding
-- [ ] WebRTC-Transport
+- [ ] Transport ueber die Agent-Verbindung und SSE (**kein** WebRTC/TURN, ADR-004)
 - [ ] Session-Ende/Widerruf
 
 ## Phase 5 - Fernsteuerung

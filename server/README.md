@@ -25,7 +25,7 @@ Der Feedback-Server ist die Control Plane fuer authentisierte Control-Center-Sit
 - Remote-Session-Orchestrierung
 - Live-`system.info` Request/Response ueber den Agent
 - Control-Web-Anbindung
-- spaetere WebRTC-Signalisierung
+- Bildschirmstrom als SSE-Bruecke (kein WebRTC, ADR-004)
 
 ## Entwicklung
 

@@ -92,7 +92,7 @@ Hardware tatsaechlich benutzt.
 | Milestone | Stand |
 | --- | --- |
 | 4 Media (`media.photos.read`, `media.videos.read`, Photo Picker) | implementiert auf allen drei Seiten, nicht auf Hardware getestet |
-| 5 Screen View (`screen.view`, MediaProjection, MediaCodec, WebRTC **plus STUN/TURN**) | nicht begonnen |
+| 5 Screen View (`screen.view`, MediaProjection, MediaCodec, Strom ueber die Agent-Verbindung) | Protokoll, Threat Model und ADR-004 fertig; Code auf allen drei Seiten offen |
 | 6 Remote Control (`screen.control`, AccessibilityService, Input-Protokoll) | nicht begonnen |
 | 7 Hardening (Fuzzing, Dependency Audit, Batterie-Review) | Threat Model steht, Rest nicht begonnen |
 | 8 Windows-Agent | nicht begonnen |

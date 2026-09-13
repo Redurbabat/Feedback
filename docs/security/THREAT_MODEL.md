@@ -1,7 +1,10 @@
 # Threat Model
 
 Stand: 2026-09-13. Gilt fuer Protokoll v1 mit den vier implementierten Lesefaehigkeiten
-`system.info`, `files.read`, `media.photos.read` und `media.videos.read`.
+`system.info`, `files.read`, `media.photos.read` und `media.videos.read` sowie fuer
+`screen.view`, das in Protokoll-Abschnitt 8.5 festgelegt und derzeit in Umsetzung ist.
+Bedrohungen 4.15 bis 4.18 beschreiben `screen.view`; sie stehen hier, bevor der Code steht,
+weil Konstitution Punkt 5 genau diese Reihenfolge verlangt.
 
 Diese Datei beschreibt, wogegen Feedback schuetzt, wogegen ausdruecklich **nicht**, und was
 nach allen Massnahmen an Risiko uebrig bleibt. Ein Threat Model, das nur Erfolge auflistet,
@@ -23,12 +26,15 @@ ist Werbung.
 
 1. **Der private Geraeteschluessel.** Verlaesst den Android Keystore nie. Wer ihn haette, koennte
    sich dauerhaft als das Geraet ausgeben.
-2. **Freigegebene Inhalte** - Dateien, Fotos, Videos.
-3. **`deviceToken` und Pairing-Geheimnisse.** Wer sie hat, spricht als das Geraet bzw. kann eine
+2. **Der Bildschirminhalt waehrend eines `screen.view`-Stroms.** Er ist umfassender als jede
+   Freigabe: der Besitzer waehlt hier keinen Bereich aus, sondern nur einen Zeitpunkt, und im
+   Bild liegt alles - fremde Apps, Benachrichtigungen, Eingaben.
+3. **Freigegebene Inhalte** - Dateien, Fotos, Videos.
+4. **`deviceToken` und Pairing-Geheimnisse.** Wer sie hat, spricht als das Geraet bzw. kann eine
    offene Kopplung uebernehmen.
-4. **Die Control-Center-Sitzung.** Wer sie hat, kann Capabilities erteilen.
-5. **Die App-Lock-Geheimzahl** und der lokale Fehlversuchszaehler.
-6. **Audit-Metadaten.**
+5. **Die Control-Center-Sitzung.** Wer sie hat, kann Capabilities erteilen.
+6. **Die App-Lock-Geheimzahl** und der lokale Fehlversuchszaehler.
+7. **Audit-Metadaten.**
 
 ## 3. Nicht-Ziele
 
@@ -193,6 +199,103 @@ hinter einem Load Balancer zaehlen getrennt und vervielfachen damit jedes Limit.
 deshalb ausdruecklich Single-Instance (`BETRIEB.md` Abschnitt 4). Wer `FEEDBACK_TRUST_PROXY=true`
 ohne setzenden Proxy aktiviert, haendigt die Umgehung aus.
 
+### 4.15 Der Serverbetreiber sieht den Bildschirm mit
+
+**Impact** hoch. **Likelihood** niedrig bei eigenem Betrieb, hoch bei fremdem.
+**Mitigation** Es gibt keine. Das ist die ehrliche Antwort auf die Frage aus der frueheren
+Fassung dieses Dokuments, ob die Strecke Ende-zu-Ende verschluesselt ist: **sie ist es nicht.**
+TLS endet am Control Server, und `screen.frame` traegt dort denselben Klartext wie
+`files.download.chunk` heute schon.
+
+Was der Server dagegen **nicht** tut: Frames auf Platte schreiben, zwischenspeichern,
+Standbilder ablegen oder Bildinhalte protokollieren (Protokoll 8.5.10 und 12). Ein abgebrochener
+Strom hinterlaesst nichts. Das ist eine Zusage ueber das Verhalten des Codes, keine kryptografische
+Garantie - wer den Server kontrolliert, kann den Code aendern (4.6).
+
+WebRTC wuerde hier weniger helfen, als es klingt, und das ist der Grund, warum es in v1 nicht
+eingebaut ist (Protokoll 8.5.1, ADR-004): DTLS-SRTP schuetzt gegen ein *fremdes* TURN-Relay, aber
+die Fingerprints werden ueber die Signalisierung ausgetauscht - und die waere unser eigener Server.
+Wer die Signalisierung stellt, kann Fingerprints tauschen. WebRTC waere gegen den Serverbetreiber
+also genau so wirkungslos und haette zusaetzlich NAT-Traversal, ein Relay und eine zweite
+Uebertragungsstrecke mitgebracht.
+
+**Residual** Wer den Server betreibt, kann zusehen. Der Widerrufspfad ist organisatorisch, nicht
+technisch: **den Server selbst betreiben** (`docs/deployment/BETRIEB.md`). Echte Ende-zu-Ende-
+Verschluesselung braucht einen Schluessel auf Browserseite, den das Geraet aus dem Pairing kennt,
+und eine Bindung des Medienschluessels an den Geraeteschluessel im Keystore. Beides existiert
+nicht und steht als Punkt 6 in Abschnitt 6.
+
+### 4.16 Der Strom laeuft weiter, ohne dass der Besitzer es merkt
+
+**Impact** hoch. **Likelihood** niedrig.
+**Mitigation** Vier Dinge, und nur zwei davon sind unsere:
+
+1. **Androids eigene Aufnahme-Anzeige.** Statusleistensymbol bzw. Datenschutzindikator, solange
+   eine MediaProjection laeuft. Keine App kann sie entfernen, unterdruecken oder ueberzeichnen.
+   Das ist die belastbare Gegenmassnahme.
+2. **Androids Einwilligungsdialog pro Sitzung.** Ab Android 14 ist die Projektionszustimmung nicht
+   wiederverwendbar; das Protokoll verlangt sie ohnehin fuer jede Sitzung neu (8.5.2).
+3. Unser Vordergrunddienst mit laufender Benachrichtigung, die den Empfaenger nennt und einen
+   Stop-Knopf traegt.
+4. `SCREEN_SESSION_TTL_MS` ohne Verlaengerung: nach zehn Minuten ist Schluss, auch wenn zugesehen
+   wird. Eine Sitzung, die sich durch Aktivitaet verlaengert, laeuft genau so lange, wie jemand
+   zusieht.
+
+**Die Unumgehbarkeit unserer Benachrichtigung ist ausdruecklich nicht behauptet.** Ein
+Vordergrunddienst-Posten laesst sich nicht wegwischen, solange der Dienst laeuft - aber der
+Benachrichtigungskanal laesst sich in den Systemeinstellungen stummschalten, und einzelne
+Hersteller-ROMs gehen darueber hinaus. Wer sich auf Punkt 3 verlaesst, verlaesst sich auf etwas,
+das der Nutzer selbst abschalten kann. Punkt 1 kann er nicht abschalten.
+
+Der Beitrag unserer Benachrichtigung ist deshalb nicht *dass* aufgenommen wird - das sagt das
+System - sondern *fuer wen*, und der lokale Stop ohne Umweg ueber den Server.
+
+**Residual** Auf einem ROM, das die Systemindikatoren manipuliert, faellt diese Verteidigung weg;
+das ist 4.9 und ausserhalb des Schutzumfangs. Ungeprueft auf echter Hardware: dass die
+Benachrichtigung tatsaechlich nicht wischbar ist und dass der Stop-Knopf die Projektion in unter
+einer Sekunde beendet, steht bis zu einem Geraetetest als Behauptung da (Abschnitt 8).
+
+### 4.17 Verbindungsabbruch waehrend laufender Aufnahme
+
+**Impact** hoch. **Likelihood** hoch - Mobilfunk bricht ab, das ist der Normalfall, nicht der
+Ausnahmefall.
+**Mitigation** Das Geraet stoppt die MediaProjection **sofort**, wenn die Agent-Verbindung
+verloren geht, und beendet danach den Vordergrunddienst (Protokoll 8.5.9). Es haelt die Aufnahme
+nicht warm und wartet keinen Reconnect ab. Nach einem Reconnect gibt es keine Fortsetzung: ein
+neuer Strom braucht eine neue Sitzung und beide Zustimmungen erneut.
+
+Der naheliegende Optimierungsgedanke - Aufnahme laufen lassen, damit der Strom nach dem Reconnect
+sofort wieder Bilder hat - ist genau die Schwachstelle: das Geraet filmt dann weiter, waehrend
+niemand zusieht und der Besitzer die Sitzung fuer beendet haelt. Zusaetzlich greift
+`SCREEN_STREAM_IDLE_TIMEOUT_MS` fuer den Fall, dass die Verbindung steht, aber niemand mehr
+bestaetigt.
+
+**Residual** Wird der Prozess hart beendet (Speichermangel, Force Stop), gibt es keinen Code mehr,
+der aufraeumt; Android beendet die Projektion dann selbst mit dem Prozess. Der ungepruefte Punkt
+ist die Reihenfolge: erst Aufnahme stoppen, dann Dienst beenden. Andersherum bliebe ein kurzes
+Fenster ohne sichtbaren Hinweis bei noch laufender Projektion.
+
+### 4.18 Der Bildstrom liest mit, was er nicht soll
+
+**Impact** hoch. **Likelihood** mittel.
+**Mitigation** MediaProjection nimmt die **gesamte** Anzeige auf, inklusive Benachrichtigungen,
+Tastatureingaben und fremder Apps. Das ist der Unterschied zu `files.read`, wo der Besitzer einen
+Bereich auswaehlt; hier waehlt er nur den Zeitpunkt.
+
+Drei Dinge begrenzen den Schaden:
+
+- Fenster mit `FLAG_SECURE` erscheinen schwarz. Banking-Apps und Passwortmanager setzen das.
+- **Feedbacks eigene App-Sperre ist `FLAG_SECURE`.** Ohne das waere ein laufender Bildstrom der
+  bequemste Weg, die Geheimzahl abzulesen, die die App schuetzt - ein Angreifer mit gestohlener
+  Browser-Sitzung (4.5) koennte den Strom starten und warten, bis der Besitzer entsperrt.
+- Kein Audio: weder Mikrofon noch `AudioPlaybackCaptureConfiguration`. Der Encoder hat keine
+  Audiospur, und das Protokoll hat kein Feld dafuer.
+
+**Residual** Apps, die `FLAG_SECURE` nicht setzen - also die meisten -, sind vollstaendig sichtbar.
+Eine Zwei-Faktor-SMS in einer Benachrichtigung ist im Bild. Dagegen hilft nur, den Strom nicht zu
+starten; deshalb ist `screen.view` eine eigene Capability ohne jede implizite Herleitung und
+deshalb ist die Sitzung hart befristet.
+
 ## 5. Wiederkehrende Muster
 
 Drei Entscheidungen tauchen in fast jeder Zeile oben auf:
@@ -213,19 +316,34 @@ Ungeloest, nach Nutzen sortiert:
 3. **Keine Rotation des `deviceToken`** (4.13).
 4. **Rate Limits und Presence nur im Prozessspeicher** (4.14).
 5. Kein Pinning der Server-Identitaet an den beim Pairing gesehenen Schluessel (TOFU waere moeglich).
+6. **Keine Ende-zu-Ende-Verschluesselung der Inhalte** gegenueber dem Serverbetreiber - weder fuer
+   Dateien noch fuer Bildframes (4.15). Das ist der groesste offene Punkt der Liste und der
+   einzige, dessen Loesung neue Kryptografie braucht statt nur Sorgfalt.
 
-## 7. Was vor Milestone 5 zu ergaenzen ist
+## 7. Was vor Milestone 6 zu ergaenzen ist
 
-`screen.view` verschiebt die Lage deutlich: eine Bildschirmuebertragung zeigt alles, was auf dem
-Geraet passiert, auch Inhalte anderer Apps, Benachrichtigungen und Eingaben. Bevor sie
-implementiert wird, gehoert hier hinein:
+Die vier Fragen, die hier vor Milestone 5 standen, sind beantwortet und in 4.15 bis 4.18
+eingearbeitet - einschliesslich der unbequemen Antwort, dass die Strecke nicht
+Ende-zu-Ende-verschluesselt ist und unsere eigene Benachrichtigung nicht unumgehbar.
 
-- Wer den Medienstrom sehen kann, wenn ein Relay (TURN) im Weg liegt, und was er nicht speichert.
-- Ob die Strecke Ende-zu-Ende verschluesselt ist oder am Relay aufgemacht wird - und wenn ja,
-  warum das akzeptabel sein soll.
-- Der Angriff "Sitzung laeuft weiter, ohne dass der Besitzer es merkt": die Notification ist die
-  Gegenmassnahme, und ihre Unumgehbarkeit ist zu pruefen statt anzunehmen.
-- Was passiert, wenn die Verbindung abbricht, waehrend die MediaProjection noch laeuft.
+Milestone 6 ist `screen.control`, und das ist die groessere Verschiebung: bis hierhin kann
+Feedback lesen und zusehen, danach kann es **handeln**. Bevor ein Eingabekanal implementiert wird,
+gehoert hier hinein:
+
+- Was ein Eingabeereignis ausloesen kann, das der Besitzer nicht will: eine Bestaetigung in einer
+  Banking-App, die Annahme einer Berechtigungsanfrage, das Deaktivieren von Feedbacks eigener
+  App-Sperre. Ein Klick auf den eigenen Widerrufspfad ist der Angriff, gegen den ein
+  Fernsteuerungsprotokoll sich selbst schuetzen muss.
+- Wie ein Eingabekanal ohne AccessibilityService oder Root ueberhaupt umgesetzt werden soll - und
+  falls er einen AccessibilityService braucht: was dieser Dienst sonst noch kann und warum das
+  vertretbar waere. Ein Accessibility-Dienst liest jeden Bildschirminhalt jeder App.
+- Warum ein uebernommener Eingabekanal etwas anderes ist als ein uebernommener Bildstrom, und was
+  der Besitzer waehrend einer laufenden Fernsteuerung sieht und sofort stoppen kann.
+- Ob Eingabe eine eigene, getrennte Zustimmung pro Sitzung braucht - und ob sie nur bei sichtbarem
+  Bildschirm gelten darf.
+
+Vorher gilt unveraendert: `screen.control` ist deklariert, deny-by-default und antwortet
+`UNSUPPORTED`.
 
 ## 8. Abnahme
 

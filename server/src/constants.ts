@@ -39,6 +39,25 @@ export const FILE_MAX_DOWNLOAD_BYTES = 268_435_456;
 export const FILE_MAX_LIST_ENTRIES = 200;
 export const FILE_NAME_MAX = 255;
 
+/**
+ * `screen.view` limits from section 11.
+ *
+ * The window is deliberately smaller than `FILE_TRANSFER_WINDOW`: for a file a large
+ * window costs memory, for a live picture it costs delay. A viewer that is three
+ * frames behind is still watching what is happening; one that is thirty frames
+ * behind is watching the past.
+ */
+export const SCREEN_SESSION_TTL_MS = 600_000;
+export const SCREEN_CONSENT_TIMEOUT_MS = 60_000;
+export const SCREEN_CHUNK_BYTES = 32_768;
+export const SCREEN_FRAME_WINDOW = 3;
+export const SCREEN_MAX_FRAME_BYTES = 1_048_576;
+export const SCREEN_MAX_CONCURRENT_STREAMS = 1;
+export const SCREEN_STREAM_IDLE_TIMEOUT_MS = 15_000;
+export const SCREEN_MAX_DIMENSION = 1_280;
+export const SCREEN_MAX_FPS = 15;
+export const SCREEN_MAX_BITRATE_KBPS = 2_500;
+
 /** Poll interval suggested to the device while a pairing session is pending. */
 export const PAIRING_POLL_INTERVAL_MS = 2_000;
 

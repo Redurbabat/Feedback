@@ -248,12 +248,21 @@ neu koppeln; ein zweiter `claim` wird mit `PAIRING_ALREADY_USED` abgelehnt.
 | `GET` | `/devices/{id}/files/entries` | Eintraege eines Bereichs auflisten |
 | `GET` | `/devices/{id}/files/content` | Datei streamen (Download) |
 | `DELETE` | `/devices/{id}/files/session` | `files.read`-Session vorzeitig beenden |
+| `POST` | `/devices/{id}/screen/session` | `screen.view`-Sitzung eroeffnen, fragt am Geraet nach |
+| `GET` | `/devices/{id}/screen/stream` | Bildstrom als `text/event-stream` (SSE) |
+| `POST` | `/devices/{id}/screen/keyframe` | Keyframe anfordern |
+| `DELETE` | `/devices/{id}/screen/session` | Bildstrom beenden |
 | `POST` | `/devices/{id}/revoke` | Geraet widerrufen |
 | `GET` | `/devices/{id}/audit` | Audit-Ereignisse des Geraets |
 | `GET` | `/events/ws` | Presence-/Pairing-Ereignisse fuer das Control Center |
 
 `approve`/`reject` verlangen denselben Proof wie `lookup` (`ticket` **oder** `displayCode`).
 Eine `pairingId` allein ist keine Autorisierung.
+
+Der Bildstrom ist ein `GET` mit `text/event-stream`, weil ein Browser dafuer keinen zweiten
+WebSocket mit eigenem Authentisierungspfad braucht: die Cookie-Session und die Origin-Pruefung
+gelten unveraendert, und die Gegenrichtung (Stop, Keyframe) laeuft ueber normale, CSRF-geschuetzte
+Aufrufe.
 
 Alle zustandsaendernden Anfragen verlangen den Header `X-Feedback-CSRF` mit dem Wert aus
 `GET /auth/session` und einen gueltigen `Origin`/`Sec-Fetch-Site`-Kontext.
@@ -319,6 +328,13 @@ Regeln:
 | `files.download.ack` | Server → Geraet | siehe 8.3.6 |
 | `files.download.complete` | Geraet → Server | siehe 8.3.6 |
 | `files.download.cancel` | beide | siehe 8.3.7 |
+| `screen.start` | Server → Geraet | siehe 8.5.4 |
+| `screen.consent` | Geraet → Server | siehe 8.5.4 |
+| `screen.started` | Geraet → Server | siehe 8.5.5 |
+| `screen.frame` | Geraet → Server | siehe 8.5.6 |
+| `screen.frame.ack` | Server → Geraet | siehe 8.5.7 |
+| `screen.keyframe.request` | Server → Geraet | siehe 8.5.7 |
+| `screen.stop` | beide | siehe 8.5.8 |
 | `device.revoked` | Server → Geraet | `{ reason: "revoked_by_owner" }` |
 | `error` | beide | `{ code, message, relatesTo?: messageId }` |
 
@@ -346,6 +362,11 @@ Keine implizite Hierarchie: `screen.control` impliziert nicht `files.read`,
 In v1 sind `system.info`, `files.read`, `media.photos.read` und `media.videos.read`
 **implementiert**. Alle anderen Capabilities sind
 deklariert, deny-by-default und liefern `UNSUPPORTED`, solange kein Feature dahintersteht.
+
+`screen.view` ist in Abschnitt 8.5 vollstaendig festgelegt, aber noch **nicht** auf allen drei
+Seiten umgesetzt. Bis das der Fall ist, bleibt es deny-by-default und antwortet `UNSUPPORTED` -
+eine Spezifikation ist keine Implementierung, und dieser Abschnitt beschreibt den Stand des
+Codes, nicht den der Absicht.
 
 Effektive Berechtigung:
 
@@ -584,6 +605,220 @@ Der Dateiinhalt selbst wird unveraendert uebertragen. Enthaelt eine Bilddatei EX
 sind sie im heruntergeladenen Inhalt enthalten - so wie sie es waeren, wenn der Besitzer die
 Datei selbst kopiert haette. Das Protokoll entfernt sie nicht und gibt auch nicht vor, es zu tun.
 
+### 8.5 `screen.view`
+
+`screen.view` ist **ausschliesslich betrachtend**. Es gibt in v1 keinen Rueckkanal fuer Eingaben:
+kein Tippen, kein Wischen, kein Tastendruck, kein Zwischenablagezugriff. Das waere
+`screen.control`, und das ist nicht implementiert (Abschnitt 13). Es existiert dafuer auch kein
+reservierter Nachrichtentyp.
+
+`screen.view` uebertraegt **kein Audio**. Weder Mikrofon noch die von Android angebotene
+Wiedergabeaufnahme (`AudioPlaybackCaptureConfiguration`) werden verwendet. Der Encoder hat keine
+Audiospur, und das Protokoll hat kein Feld dafuer.
+
+#### 8.5.1 Warum der Strom ueber den Server laeuft
+
+Der Bildstrom geht denselben Weg wie alles andere: ueber die bestehende, authentifizierte
+WebSocket-Verbindung des Agenten zum Control Server und von dort zum Control Center. Es gibt in v1
+**kein WebRTC, kein STUN und kein TURN**.
+
+Das ist eine bewusste Entscheidung und keine Sparmassnahme (ADR-004):
+
+- **Internet-first ohne Sonderfall.** Der Agent ist bereits verbunden, sonst gaebe es nichts zu
+  zeigen. Ein Strom ueber dieselbe Verbindung funktioniert ueberall dort, wo die App ueberhaupt
+  funktioniert - hinter CGNAT, im Mobilfunk, hinter einer Firewall, die nur 443 durchlaesst. Eine
+  Peer-Verbindung braucht dagegen NAT-Traversal, und wenn die scheitert, braucht sie ein Relay.
+  Konstitution Punkt 13 nennt die Peer-Verbindung ausdruecklich eine Latenzoptimierung; eine
+  Optimierung darf nicht die Voraussetzung dafuer sein, dass ein Feature ueberhaupt geht.
+- **WebRTC waere hier nicht Ende-zu-Ende-sicher.** Das ist der Punkt, der leicht falsch erzaehlt
+  wird. DTLS-SRTP verschluesselt zwischen den Peers, und ein *fremdes* TURN-Relay sieht dabei nur
+  verschluesselte Pakete. Die DTLS-Fingerprints werden aber im SDP ausgetauscht, und der
+  Signalisierungsweg waere **unser eigener Server**. Wer die Signalisierung kontrolliert, kann
+  Fingerprints tauschen und sitzt in der Mitte. Ende-zu-Ende gegen den eigenen Server waere WebRTC
+  nur mit einer Fingerprint-Bindung an den Geraeteschluessel - und mit einem Schluessel auf
+  Browserseite, den das Geraet vorher kennt. Beides gibt es nicht. WebRTC wuerde hier also
+  Sicherheit gegen einen Dritten kaufen, den es in diesem Aufbau gar nicht gibt, und gegen den
+  Server nichts aendern.
+- **Dieselbe Vertrauensstufe wie Dateien.** `files.download.chunk` laeuft heute im Klartext durch
+  den Server; TLS endet dort. Bildframes tun dasselbe. Der Server ist im Threat Model als *halb
+  vertrauenswuerdig* eingestuft, und das gilt unveraendert.
+- **Eine Uebertragungsstrecke statt zwei.** Chunking, Gegendruck und Sequenzpruefung sind die
+  Stellen, an denen ein Fehler am teuersten ist. Dieselbe Ueberlegung wie bei Medien in 8.4.
+
+Was daraus folgt, steht ohne Beschoenigung in `docs/security/THREAT_MODEL.md` 4.15: **der
+Serverbetreiber kann den Bildschirm mitsehen.** Der Server speichert keinen Frame (8.5.10), aber
+er sieht sie. Wer das nicht akzeptieren will, betreibt den Server selbst - das ist der
+Widerrufspfad, den es hier gibt.
+
+#### 8.5.2 Zwei Einwilligungen, und die zweite gehoert dem System
+
+Ein Bildschirmstrom beginnt **nie** dadurch, dass der Server ihn anfordert. Es braucht zwei
+getrennte Zustimmungen auf dem Geraet, in dieser Reihenfolge:
+
+1. **Feedbacks eigene Rueckfrage.** Das Geraet zeigt, wer fragt und was verlangt wird, und wartet
+   auf eine ausdrueckliche Bestaetigung. Sie ist nicht vorausgewaehlt und laeuft nach
+   `SCREEN_CONSENT_TIMEOUT_MS` ohne Antwort ab (`consent_timeout`). Diese Rueckfrage existiert,
+   weil der Systemdialog nur *dass* aufgenommen wird zeigt, nicht *fuer wen*.
+2. **Der MediaProjection-Systemdialog von Android.** Er wird ueber
+   `MediaProjectionManager.createScreenCaptureIntent()` ausgeloest, gehoert dem System, und die App
+   kann ihn weder unterdruecken noch vorbeantworten noch sein Aussehen aendern. Er ist die
+   eigentliche Einwilligung.
+
+Schritt 1 ersetzt Schritt 2 nicht und darf ihn auch nicht plausibler machen. Lehnt der Besitzer in
+einem der beiden Schritte ab, antwortet das Geraet mit `PERMISSION_REQUIRED` und startet keine
+Aufnahme.
+
+Die Zustimmung gilt **pro Sitzung**. Sie wird nicht gespeichert, nicht wiederverwendet und nicht
+verlaengert. Ab Android 14 verlangt das System das ohnehin; das Protokoll verlangt es auf jeder
+Version.
+
+Waehrend der gesamten Aufnahme laeuft ein Vordergrunddienst mit
+`foregroundServiceType="mediaProjection"` und einer laufenden Benachrichtigung, die den Empfaenger
+nennt und einen **Stop**-Knopf traegt. Der Stop wirkt sofort und lokal, ohne Rueckfrage beim
+Server.
+
+Ehrlich dazu, weil die Gegenmassnahme sonst besser klingt, als sie ist: **unumgehbar ist nicht
+unsere Benachrichtigung, sondern die des Systems.** Eine App-Benachrichtigung laesst sich ueber die
+Kanaleinstellungen stummschalten, und manche Hersteller-ROMs gehen weiter. Worauf man sich stuetzen
+kann, ist Androids eigene Aufnahme-Anzeige (Statusleistensymbol bzw. Datenschutzindikator), die
+keine App entfernen kann. Unsere Benachrichtigung fuegt die Information hinzu, *wer* zusieht, und
+den lokalen Stop. Siehe THREAT_MODEL 4.16.
+
+#### 8.5.3 Was im Bild landet - und was nicht
+
+MediaProjection nimmt die **gesamte Anzeige** auf: jede App im Vordergrund, eingeblendete
+Benachrichtigungen, Tastatureingaben, alles. Das ist der Grund, warum `screen.view` eine andere
+Groessenordnung ist als `files.read`, wo der Besitzer einen Bereich auswaehlt.
+
+Zwei Einschraenkungen kommen vom System und gelten unabhaengig von uns:
+
+- Fenster mit `FLAG_SECURE` (Banking, Passwortmanager, DRM-Inhalte) erscheinen schwarz.
+- Der Aufnahmeumfang ist die Anzeige; andere virtuelle Displays werden nicht mit aufgenommen.
+
+Eine Einschraenkung kommt von uns: **Feedbacks eigene sensible Oberflaechen sind `FLAG_SECURE`**,
+insbesondere die Eingabe der App-Sperre. Sonst waere die Bildschirmuebertragung ein Weg, die
+Geheimzahl abzulesen, die sie schuetzen soll.
+
+#### 8.5.4 Nachrichtentypen
+
+| Typ | Richtung | Payload |
+| --- | --- | --- |
+| `screen.start` | Server → Geraet | `{ streamId, maxWidth, maxHeight, maxFps, maxBitrateKbps }` |
+| `screen.consent` | Geraet → Server | `{ streamId, state }` |
+| `screen.started` | Geraet → Server | `{ streamId, width, height, codec, fps, config }` |
+| `screen.frame` | Geraet → Server | `{ streamId, sequence, chunkIndex, chunkCount, keyFrame, timestampUs, data }` |
+| `screen.frame.ack` | Server → Geraet | `{ streamId, sequence }` |
+| `screen.keyframe.request` | Server → Geraet | `{ streamId }` |
+| `screen.stop` | beide | `{ streamId, reason }` |
+
+Alle `screen.*`-Typen verlangen eine gueltige `sessionId` **und** effektive `screen.view`.
+Korrelation laeuft wie in 8.3.4 ueber `messageId`/`relatesTo`, der Strom zusaetzlich ueber
+`streamId`.
+
+`state` in `screen.consent` ist `pending`, `granted` oder `declined`. `pending` wird genau einmal
+gesendet, sobald die Rueckfrage sichtbar ist - damit das Control Center "wartet auf Zustimmung am
+Geraet" anzeigen kann, statt einen haengenden Aufruf zu zeigen.
+
+#### 8.5.5 Start
+
+```text
+Server                                  Geraet
+  |-- screen.start -------------------->|  prueft Capability und Session
+  |<-- screen.consent (pending) --------|  eigene Rueckfrage sichtbar
+  |                                     |  Besitzer bestaetigt
+  |                                     |  Android-Systemdialog
+  |<-- screen.consent (granted) --------|  Vordergrunddienst laeuft
+  |<-- screen.started ------------------|  Encoder konfiguriert
+  |<-- screen.frame (seq 0, keyFrame) --|
+  |-- screen.frame.ack (seq 0) -------->|
+  |              ...                    |
+```
+
+- `codec` ist ein Codec-String im Stil von `avc1.42E01E`. v1 verlangt H.264; das Control Center
+  lehnt einen unbekannten Codec ab, statt zu raten.
+- `config` ist die base64-kodierte Encoder-Konfiguration (SPS/PPS in Annex-B). Das Geraet wiederholt
+  sie zusaetzlich **vor jedem Keyframe**, damit ein Betrachter, der spaeter einsteigt oder einen
+  Frame verloren hat, wieder aufsetzen kann.
+- `width`, `height` und `fps` sind das, was der Encoder tatsaechlich liefert, nicht das Gewuenschte.
+  Sie sind auf `SCREEN_MAX_DIMENSION`, `SCREEN_MAX_FPS` und `SCREEN_MAX_BITRATE_KBPS` gedeckelt;
+  das Geraet skaliert selbst herunter und liefert nie mehr als die Grenzen.
+- Der erste Frame nach `screen.started` ist immer ein Keyframe.
+
+#### 8.5.6 Frames
+
+Ein kodierter Frame ist oft groesser als `MAX_FRAME_BYTES` - ein Keyframe fast immer. Er wird
+deshalb in `chunkCount` Teile zu hoechstens `SCREEN_CHUNK_BYTES` Rohbytes zerlegt, die
+`chunkIndex` von `0` bis `chunkCount - 1` durchnummeriert.
+
+- `sequence` zaehlt **Frames**, beginnt bei `0` und steigt streng monoton. Es steigt auch dann um
+  mehr als `1`, wenn das Geraet Frames verworfen hat - eine Luecke ist hier eine Information, kein
+  Fehler.
+- `timestampUs` ist die Praesentationszeit des Encoders in Mikrosekunden, monoton, ohne Bezug zur
+  Uhrzeit des Geraets.
+- `data` ist `base64` (mit Padding).
+- Ein Frame ueber `SCREEN_MAX_FRAME_BYTES` wird verworfen, statt beliebig viel Speicher fuer die
+  Wiederzusammensetzung zu binden.
+
+#### 8.5.7 Gegendruck und Verlust - anders als bei Dateien
+
+Bei einem Download ist eine Luecke fatal und fuehrt zum Abbruch (8.3.6). Bei einem Live-Bild ist
+das falsch: eine Datei muss vollstaendig sein, ein Bild muss **aktuell** sein.
+
+- Das Geraet haelt hoechstens `SCREEN_FRAME_WINDOW` unbestaetigte Frames offen. Ist das Fenster
+  voll, **verwirft** es neue Frames, statt sie zu puffern. Ein Puffer wuerde die Verzoegerung
+  wachsen lassen, bis das Bild nicht mehr zeigt, was gerade passiert.
+- Ein unvollstaendig gebliebener Frame (ein Chunk fehlt, wenn der naechste Frame beginnt) wird
+  verworfen.
+- **Wer einen Frame verwirft, fordert einen Keyframe an.** Ohne den vorherigen Frame ist ein
+  Delta-Frame wertlos, und ein Betrachter, der Artefakte zeigt, ist schlimmer als einer, der kurz
+  wartet. Der Server sendet dafuer `screen.keyframe.request`; das Geraet fordert intern einen
+  Sync-Frame vom Encoder an.
+- Ein wiederholter oder rueckwaerts laufender `sequence`-Wert ist dagegen ein Protokollfehler
+  (`INVALID_MESSAGE`) und beendet den Strom: das ist kein Verlust, sondern eine kaputte Gegenseite.
+
+Mehr als `SCREEN_MAX_CONCURRENT_STREAMS` gleichzeitige Stroeme pro Geraet ⇒ `RATE_LIMITED`.
+
+#### 8.5.8 Ende
+
+`screen.stop` darf von beiden Seiten gesendet werden und beendet den Strom sofort. `reason` ist
+einer von `owner_stopped`, `client_cancelled`, `session_expired`, `capability_revoked`,
+`device_revoked`, `consent_declined`, `consent_timeout`, `projection_stopped`, `encoder_error`,
+`timeout`, `connection_lost`.
+
+Ein Strom endet ausserdem bei:
+
+- Ablauf oder Widerruf der Remote-Session (`SCREEN_SESSION_TTL_MS`, ohne Verlaengerung)
+- Entzug von `screen.view` server- oder geraeteseitig
+- Widerruf des Geraets
+- Verlust der Agent-Verbindung (8.5.9)
+- `SCREEN_STREAM_IDLE_TIMEOUT_MS` ohne Fortschritt
+- `MediaProjection.Callback#onStop` - das System hat die Aufnahme beendet
+
+In jedem dieser Faelle stoppt das Geraet **die Aufnahme zuerst** und beendet dann den
+Vordergrunddienst. Die Reihenfolge ist wichtig: zuerst aufhoeren zu filmen, dann aufraeumen.
+
+#### 8.5.9 Verbindungsverlust
+
+Faellt die Agent-Verbindung waehrend einer laufenden Aufnahme aus, **stoppt das Geraet die
+MediaProjection sofort** und beendet den Vordergrunddienst. Es haelt sie nicht "warm", wartet
+keinen Reconnect ab und nimmt nicht weiter auf, um bei Rueckkehr der Verbindung sofort liefern zu
+koennen.
+
+Eine laufende Aufnahme ohne empfangsbereite Gegenseite hat keinen Zweck und genau einen Effekt: das
+Geraet filmt sich selbst, waehrend niemand mehr zusieht und der Besitzer annimmt, es sei vorbei.
+
+Nach einem Reconnect gibt es deshalb keine Fortsetzung. Ein neuer Strom braucht eine neue Sitzung
+und beide Zustimmungen aus 8.5.2 erneut.
+
+#### 8.5.10 Nichts wird gespeichert
+
+Der Server reicht Frames durch und schreibt sie **nicht** auf Platte - kein Cache, keine Aufnahme,
+kein Standbild. Ein abgebrochener Strom hinterlaesst nichts. Das Control Center dekodiert in den
+Arbeitsspeicher; es gibt keine Aufnahmefunktion und keinen Schnappschuss-Endpunkt.
+
+Bildschirmframes erscheinen niemals im Log (Abschnitt 12). Protokolliert werden ausschliesslich
+`streamId`, Start, Ende und `reason`.
+
 ## 9. Remote-Sessions
 
 Jede privilegierte Anfrage laeuft in einer Remote-Session:
@@ -599,9 +834,15 @@ TTL nach Capability:
 | --- | --- | --- |
 | `system.info` | `REMOTE_SESSION_TTL_MS = 60000` | eine einzelne Abfrage |
 | `files.read` | `FILES_SESSION_TTL_MS = 300000` | Blaettern und Download brauchen mehrere Anfragen |
+| `screen.view` | `SCREEN_SESSION_TTL_MS = 600000` | ein Blick auf den Bildschirm dauert laenger als eine Abfrage |
 
 Eine `files.read`-Session verlaengert sich **nicht** unbegrenzt durch Aktivitaet: `expiresAt`
 steht beim Anlegen fest. Laeuft sie waehrend eines Transfers ab, wird der Transfer beendet.
+
+Fuer `screen.view` gilt dasselbe, und dort ist der feste Ablauf ausdruecklich eine
+Sicherheitsmassnahme statt einer Unbequemlichkeit: eine Sitzung, die sich durch Aktivitaet
+verlaengert, laeuft genau so lange, wie jemand zusieht - also potenziell unbegrenzt. Ein neuer
+Blick braucht eine neue Sitzung und beide Zustimmungen aus 8.5.2 erneut.
 
 Abgelaufene oder widerrufene Sessions werden auf beiden Seiten abgelehnt
 (`SESSION_EXPIRED`). Das Geraet fuehrt keine Anfrage ohne gueltige `sessionId` aus.
@@ -650,12 +891,27 @@ unterschieden, solange das die Brute-Force-Analyse erleichtern wuerde.
 | `FILE_MAX_DOWNLOAD_BYTES` | 268435456 |
 | `FILE_MAX_LIST_ENTRIES` | 200 |
 | `FILE_NAME_MAX` | 255 |
+| `SCREEN_SESSION_TTL_MS` | 600000 |
+| `SCREEN_CONSENT_TIMEOUT_MS` | 60000 |
+| `SCREEN_CHUNK_BYTES` | 32768 |
+| `SCREEN_FRAME_WINDOW` | 3 |
+| `SCREEN_MAX_FRAME_BYTES` | 1048576 |
+| `SCREEN_MAX_CONCURRENT_STREAMS` | 1 |
+| `SCREEN_STREAM_IDLE_TIMEOUT_MS` | 15000 |
+| `SCREEN_MAX_DIMENSION` | 1280 |
+| `SCREEN_MAX_FPS` | 15 |
+| `SCREEN_MAX_BITRATE_KBPS` | 2500 |
 
 `FILE_CHUNK_BYTES` ist so gewaehlt, dass ein Chunk base64-kodiert samt Envelope sicher unter
 `MAX_FRAME_BYTES` bleibt: 32768 Rohbytes ergeben 43692 base64-Zeichen, der Rest ist Envelope.
 
 `FILE_MAX_DOWNLOAD_BYTES` ist serverseitig konfigurierbar. Das Geraet erzwingt zusaetzlich sein
 eigenes Limit; der kleinere Wert gewinnt.
+
+`SCREEN_FRAME_WINDOW` ist bewusst kleiner als `FILE_TRANSFER_WINDOW`: bei einer Datei kostet ein
+grosses Fenster Speicher, bei einem Live-Bild kostet es Verzoegerung. Drei unbestaetigte Frames
+sind bei 15 fps rund 200 ms - genug, um eine Schwankung zu ueberbruecken, zu wenig, um unbemerkt
+einen Rueckstand aufzubauen.
 
 Rate Limits (Token Bucket, pro IP und pro Prinzipal):
 
@@ -668,6 +924,8 @@ Rate Limits (Token Bucket, pro IP und pro Prinzipal):
 | `POST /pairing/{id}/claim` | 10 / 10 min |
 | `POST /devices/{id}/files/session` | 30 / 10 min |
 | `GET /devices/{id}/files/content` | 60 / 10 min |
+| `POST /devices/{id}/screen/session` | 20 / 10 min |
+| `POST /devices/{id}/screen/keyframe` | 60 / 10 min |
 | sonstige `/api/v1` | 600 / 10 min |
 
 ## 12. Logging
@@ -680,9 +938,17 @@ Share-Anzeigenamen, Bildschirmframes, Passwoerter.
 
 ## 13. Noch nicht Teil von v1
 
-`media.*`, `screen.view`, `screen.control` und `clipboard.*` sind reserviert, aber nicht
-implementiert. Remote-Input (`screen.control`) wird erst nach aktualisiertem Threat Model
-aktiviert und transportiert niemals Shell-Kommandos oder beliebige Codeausfuehrung.
+`screen.control` und `clipboard.*` sind reserviert, aber nicht implementiert. Remote-Input
+(`screen.control`) wird erst nach aktualisiertem Threat Model aktiviert und transportiert niemals
+Shell-Kommandos oder beliebige Codeausfuehrung.
+
+`screen.view` ist festgelegt (Abschnitt 8.5), aber noch nicht auf allen drei Seiten umgesetzt und
+bis dahin deny-by-default. Es ist ausdruecklich **nur betrachtend**: kein
+Eingabekanal, kein Audio, keine Aufnahmefunktion. Ein Eingabekanal ist kein kleiner Zusatz zu
+einem Bildstrom, sondern die Grenze zwischen Zusehen und Fernsteuern.
+
+WebRTC, STUN und TURN sind kein Bestandteil von v1. Die Begruendung steht in 8.5.1 und
+ADR-004; sie ist nicht "spaeter", sondern "in diesem Aufbau kein Gewinn".
 
 `files.read` ist implementiert, aber bewusst **nur lesend**. Schreibende Dateioperationen
 (`delete`, `rename`, `write`, `upload`, `execute`) sind kein Bestandteil von v1 und haben keinen
