@@ -17,22 +17,29 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.redurbabat.feedback.pairing.PairingInvitation
 import com.redurbabat.feedback.security.DeviceIdentity
 
 @Composable
 fun FeedbackApp(
     identity: DeviceIdentity?,
     identityAvailable: Boolean,
+    onCreatePairingInvitation: () -> PairingInvitation,
 ) {
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
             HomeScreen(
                 identity = identity,
                 identityAvailable = identityAvailable,
+                onCreatePairingInvitation = onCreatePairingInvitation,
             )
         }
     }
@@ -42,7 +49,15 @@ fun FeedbackApp(
 private fun HomeScreen(
     identity: DeviceIdentity?,
     identityAvailable: Boolean,
+    onCreatePairingInvitation: () -> PairingInvitation,
 ) {
+    var pairingInvitation by remember(identity?.deviceId) {
+        mutableStateOf<PairingInvitation?>(null)
+    }
+    var pairingError by remember(identity?.deviceId) {
+        mutableStateOf(false)
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -64,11 +79,38 @@ private fun HomeScreen(
         DeviceCard(identity = identity)
 
         Button(
-            onClick = { /* Pairing flow follows after the identity layer. */ },
+            onClick = {
+                runCatching(onCreatePairingInvitation)
+                    .onSuccess {
+                        pairingInvitation = it
+                        pairingError = false
+                    }
+                    .onFailure {
+                        pairingError = true
+                    }
+            },
             modifier = Modifier.fillMaxWidth(),
             enabled = identityAvailable,
         ) {
-            Text("Gerät verbinden")
+            Text(
+                if (pairingInvitation == null) {
+                    "Pairing-Code erzeugen"
+                } else {
+                    "Neuen Pairing-Code erzeugen"
+                },
+            )
+        }
+
+        pairingInvitation?.let { invitation ->
+            PairingCard(invitation)
+        }
+
+        if (pairingError) {
+            Text(
+                text = "Der Pairing-Code konnte nicht signiert werden.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
         }
 
         Spacer(modifier = Modifier.height(4.dp))
@@ -124,6 +166,36 @@ private fun DeviceCard(identity: DeviceIdentity?) {
 
             Text(
                 text = "Der private Schlüssel verlässt den Android Keystore nicht. Beim Pairing wird nur der öffentliche Schlüssel verwendet.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PairingCard(invitation: PairingInvitation) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "Pairing-Code",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                text = invitation.code.chunked(3).joinToString(" "),
+                style = MaterialTheme.typography.headlineMedium,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = "Der signierte Pairing-Nachweis läuft lokal nach 5 Minuten ab. Die Serverregistrierung folgt in Phase 2.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
