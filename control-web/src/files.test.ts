@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  capabilityLabel,
   currentDirectoryId,
   downloadPercent,
   enterDirectory,
@@ -9,9 +10,11 @@ import {
   progressLabel,
   rootCrumb,
   secondsUntil,
+  shareKindLabel,
+  shareLine,
   sortEntries,
 } from './files.ts';
-import type { FileEntryView } from './types.ts';
+import type { FileEntryView, FileShareView } from './types.ts';
 
 function entry(overrides: Partial<FileEntryView> & { name: string }): FileEntryView {
   return {
@@ -136,5 +139,37 @@ describe('session countdown', () => {
     expect(formatCountdown(61)).toBe('01:01');
     expect(formatCountdown(0)).toBe('00:00');
     expect(formatCountdown(-5)).toBe('00:00');
+  });
+});
+
+describe('shared areas', () => {
+  it('names every kind of area distinctly', () => {
+    const labels = (['tree', 'file', 'collection'] as const).map(shareKindLabel);
+    expect(new Set(labels).size).toBe(3);
+    expect(shareKindLabel('collection')).toBe('Auswahl');
+  });
+
+  it('names every governing capability distinctly', () => {
+    const labels = (
+      ['files.read', 'media.photos.read', 'media.videos.read'] as const
+    ).map(capabilityLabel);
+    expect(new Set(labels).size).toBe(3);
+    // Photos and videos must never read the same: they are separate switches.
+    expect(capabilityLabel('media.photos.read')).not.toBe(capabilityLabel('media.videos.read'));
+  });
+
+  it('says which switch governs an area', () => {
+    const share: FileShareView = {
+      shareId: 'fotos1',
+      displayName: 'Fotoauswahl (3)',
+      kind: 'collection',
+      capability: 'media.photos.read',
+      addedAt: '2026-09-13T10:00:00.000Z',
+    };
+    const line = shareLine(share);
+    expect(line).toContain('Auswahl');
+    expect(line).toContain('Fotos');
+    // Without the capability the owner could not tell which toggle would close it.
+    expect(line).not.toContain('Dateizugriff');
   });
 });

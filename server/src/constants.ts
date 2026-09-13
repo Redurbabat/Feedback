@@ -70,6 +70,20 @@ export type CapabilityV1 = (typeof CAPABILITIES_V1)[number];
 export const IMPLEMENTED_CAPABILITIES_V1: readonly CapabilityV1[] = [
   'system.info',
   'files.read',
+  'media.photos.read',
+  'media.videos.read',
+];
+
+/**
+ * The capabilities that can govern a shared area (protocol section 8.3.1).
+ *
+ * Listed explicitly rather than derived from "everything implemented", so adding a
+ * new implemented capability does not silently make it a way to read shares.
+ */
+export const SHARE_CAPABILITIES_V1: readonly CapabilityV1[] = [
+  'files.read',
+  'media.photos.read',
+  'media.videos.read',
 ];
 
 export function isCapabilityV1(value: string): value is CapabilityV1 {

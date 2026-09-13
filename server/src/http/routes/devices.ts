@@ -218,7 +218,7 @@ export async function registerDeviceRoutes(
         deviceId: device.id,
         sessionId: remote.id,
         messageId,
-        requiredCapability: 'system.info',
+        requiredCapabilities: ['system.info'],
         frame: agentFrame('system.info.request', {}, startedAt, remote.id, messageId),
         timeoutMs: AGENT_REQUEST_TIMEOUT_MS,
       });

@@ -90,7 +90,7 @@ Hardware tatsaechlich benutzt.
 
 | Milestone | Stand |
 | --- | --- |
-| 4 Media (`media.photos.read`, `media.videos.read`, Photo Picker) | Geraeteseite implementiert, Server und Control Web offen |
+| 4 Media (`media.photos.read`, `media.videos.read`, Photo Picker) | implementiert auf allen drei Seiten, nicht auf Hardware getestet |
 | 5 Screen View (`screen.view`, MediaProjection, MediaCodec, WebRTC **plus STUN/TURN**) | nicht begonnen |
 | 6 Remote Control (`screen.control`, AccessibilityService, Input-Protokoll) | nicht begonnen |
 | 7 Hardening (Threat Model, Fuzzing, Dependency Audit, Batterie-Review) | nicht begonnen |
@@ -148,6 +148,13 @@ Besonders relevant und ungetestet:
 - Scanbarkeit des QR-Codes auf realen Displays
 - Storage Access Framework: Verhalten verschiedener Dokumentenanbieter, entzogene Grants,
   entfernte SD-Karten, sehr grosse Ordner
+- **Fotoauswahl: ueberlebt eine Auswahl den Neustart der App?** Der Code nimmt das nicht an,
+  sondern versucht `takePersistableUriPermission`, merkt sich die Antwort und prueft die
+  Erreichbarkeit danach anders. Welcher der beiden Faelle real eintritt - und ob er sich je nach
+  Android-Version unterscheidet - laesst sich nur auf einem Geraet feststellen. Tritt der
+  nicht-persistente Fall ein, sagt die App das dem Besitzer; getestet ist der Text nicht.
+- Fotoauswahl mit sehr vielen Elementen (bis `MAX_COLLECTION_ITEMS`), Verhalten bei
+  Cloud-Mediatheken und bei Elementen, die waehrend einer Sitzung geloescht werden
 - Foreground Service unter Doze, nach Entfernen aus den Recents, bei Netzwechsel
 - Akkuverbrauch im Leerlauf mit aktiver Hintergrundverbindung
 - Store-/Policy-Pruefung des Foreground-Service-Typs `specialUse`
@@ -164,14 +171,15 @@ Diese sind bewusst so und in `docs/security/SECURITY_MODEL.md` ausfuehrlich bena
 
 ## 7. Naechster konkreter Schritt
 
-Die Server- und Control-Web-Seite von Milestone 4. Die Geraeteseite steht: Fotos und Videos werden
-ueber Androids Fotoauswahl freigegeben, als Sammlung gefuehrt und ueber dieselbe Uebertragungs-
-strecke wie Dateien ausgeliefert. Der Server fuehrt die beiden Capabilities noch nicht als
-implementiert - das ist die gleiche bewusste Zwischenstufe wie bei `files.read` und im Validator
-deklariert.
+Ein erster Durchlauf gegen ein echtes Geraet nach `docs/deployment/BETRIEB.md`.
 
-Unabhaengig davon weiter offen und wichtiger als jede weitere Schicht: ein erster Durchlauf gegen
-ein echtes Geraet nach `docs/deployment/BETRIEB.md`.
+Milestone 3 und 4 sind auf allen drei Seiten implementiert und je fuer sich getestet. Vier
+Lesefaehigkeiten stehen: Systeminformationen, Dateien, Fotos, Videos. Jede weitere Schicht wuerde
+auf einer Kette aufsetzen, die noch nie als Ganzes gelaufen ist - und Milestone 5 ist ausgerechnet
+Bildschirmuebertragung, also die Stelle, an der ein Irrtum am teuersten ist.
+
+`KNOWN_GAPS` im Validator ist wieder leer: die Zwischenstufe zwischen Geraet und Server ist
+geschlossen.
 
 Milestone 3 ist damit auf allen drei Seiten implementiert und je fuer sich getestet. Was fehlt,
 ist keine weitere Schicht, sondern der Beweis, dass sie zusammen tragen: ein Handy, ein

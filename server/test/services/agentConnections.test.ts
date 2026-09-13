@@ -90,7 +90,7 @@ describe('AgentConnectionRegistry', () => {
       deviceId: 'device-a',
       sessionId: 'session-1',
       messageId: 'message-1',
-      requiredCapability: 'system.info',
+      requiredCapabilities: ['system.info'],
       frame: '{"type":"system.info.request"}',
       timeoutMs: 1000,
     });
@@ -115,7 +115,7 @@ describe('AgentConnectionRegistry', () => {
         deviceId: 'device-a',
         sessionId: 'session-1',
         messageId: 'message-1',
-        requiredCapability: 'system.info',
+        requiredCapabilities: ['system.info'],
         frame: '{}',
         timeoutMs: 100,
       }),
@@ -129,7 +129,7 @@ describe('AgentConnectionRegistry', () => {
         deviceId: 'device-a',
         sessionId: 'missing',
         messageId: 'message-missing',
-        requiredCapability: 'system.info',
+        requiredCapabilities: ['system.info'],
         frame: '{}',
         timeoutMs: 100,
       }),
@@ -142,7 +142,7 @@ describe('AgentConnectionRegistry', () => {
       deviceId: 'device-a',
       sessionId: 'disconnecting',
       messageId: 'message-disconnecting',
-      requiredCapability: 'system.info',
+      requiredCapabilities: ['system.info'],
       frame: '{}',
       timeoutMs: 1000,
     });
@@ -159,7 +159,7 @@ describe('AgentConnectionRegistry', () => {
       deviceId: 'device-a',
       sessionId: 'session-timeout',
       messageId: 'message-timeout',
-      requiredCapability: 'system.info',
+      requiredCapabilities: ['system.info'],
       frame: '{}',
       timeoutMs: 5,
     });
@@ -179,7 +179,7 @@ describe('AgentConnectionRegistry', () => {
       deviceId: 'device-a',
       sessionId: 'files-session',
       messageId: 'message-first',
-      requiredCapability: 'files.read',
+      requiredCapabilities: ['files.read'],
       frame: '{"n":1}',
       timeoutMs: 1000,
     });
@@ -187,7 +187,7 @@ describe('AgentConnectionRegistry', () => {
       deviceId: 'device-a',
       sessionId: 'files-session',
       messageId: 'message-second',
-      requiredCapability: 'files.read',
+      requiredCapabilities: ['files.read'],
       frame: '{"n":2}',
       timeoutMs: 1000,
     });
@@ -212,7 +212,7 @@ describe('AgentConnectionRegistry', () => {
       deviceId: 'device-a',
       sessionId: 'session-keep',
       messageId: 'message-keep',
-      requiredCapability: 'files.read',
+      requiredCapabilities: ['files.read'],
       frame: '{}',
       timeoutMs: 1000,
     });

@@ -63,25 +63,28 @@ class RespondingSocket implements AgentSocketLike {
   close(): void {}
 }
 
-/** Grants files.read on both sides and connects a fake agent. */
+/** Grants the given read capabilities on both sides and connects a fake agent. */
 async function connect(
   harness: Harness,
   owned: Provisioned,
   onFrame: (frame: Record<string, unknown>) => void = () => undefined,
+  capabilities: readonly string[] = ['files.read'],
 ): Promise<RespondingSocket> {
-  await harness.context.repositories.deviceCapabilities.setGranted({
-    deviceId: owned.recordId,
-    capability: 'files.read',
-    granted: true,
-    grantedBy: owned.session.userId,
-  });
+  for (const capability of capabilities) {
+    await harness.context.repositories.deviceCapabilities.setGranted({
+      deviceId: owned.recordId,
+      capability,
+      granted: true,
+      grantedBy: owned.session.userId,
+    });
+  }
   const socket = new RespondingSocket(onFrame);
   const connection = harness.context.agentConnections.register(
     owned.recordId,
     socket,
     harness.clock.now(),
   );
-  harness.context.agentConnections.setDeviceGrantedCapabilities(connection.id, ['files.read']);
+  harness.context.agentConnections.setDeviceGrantedCapabilities(connection.id, [...capabilities]);
   return socket;
 }
 
@@ -171,6 +174,7 @@ describe('files.read routes', () => {
                   shareId: 'abc123',
                   displayName: 'Dokumente',
                   kind: 'tree',
+                  capability: 'files.read',
                   addedAt: '2026-09-13T10:00:00.000Z',
                 },
               ],
@@ -193,6 +197,7 @@ describe('files.read routes', () => {
             shareId: 'abc123',
             displayName: 'Dokumente',
             kind: 'tree',
+            capability: 'files.read',
             addedAt: '2026-09-13T10:00:00.000Z',
           },
         ],
@@ -488,6 +493,146 @@ describe('files.read routes', () => {
       });
       expect(response.statusCode).toBe(409);
       expect(errorCode(response)).toBe('SESSION_EXPIRED');
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('opens a session for media alone and reports what it actually granted', async () => {
+    const harness = await createHarness();
+    try {
+      const owned = await provision(harness);
+      await connect(harness, owned, () => undefined, ['media.photos.read']);
+
+      const response = await harness.app.inject({
+        method: 'POST',
+        url: `/api/v1/devices/${owned.recordId}/files/session`,
+        headers: controlHeaders(owned.session),
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json() as { sessionId: string; capabilities: string[] };
+      expect(body.capabilities).toEqual(['media.photos.read']);
+
+      const session = await harness.context.repositories.remoteSessions.findById(body.sessionId);
+      // Photos alone must never carry files.read or videos along with it.
+      expect(session?.approvedCapabilities).toEqual(['media.photos.read']);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('refuses a session for a capability that is not granted, even when another one is', async () => {
+    const harness = await createHarness();
+    try {
+      const owned = await provision(harness);
+      await connect(harness, owned, () => undefined, ['media.photos.read']);
+
+      const response = await harness.app.inject({
+        method: 'POST',
+        url: `/api/v1/devices/${owned.recordId}/files/session`,
+        headers: controlHeaders(owned.session),
+        payload: { capabilities: ['files.read'] },
+      });
+
+      expect(response.statusCode).toBe(403);
+      expect(errorCode(response)).toBe('CAPABILITY_DENIED');
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('narrows a request to what is effective instead of widening it', async () => {
+    const harness = await createHarness();
+    try {
+      const owned = await provision(harness);
+      await connect(harness, owned, () => undefined, ['media.photos.read', 'files.read']);
+
+      const response = await harness.app.inject({
+        method: 'POST',
+        url: `/api/v1/devices/${owned.recordId}/files/session`,
+        headers: controlHeaders(owned.session),
+        payload: { capabilities: ['media.photos.read'] },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json() as { capabilities: string[] };
+      // Asking for less gets less, even though more was available.
+      expect(body.capabilities).toEqual(['media.photos.read']);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('carries a media collection through the listing unchanged', async () => {
+    const harness = await createHarness();
+    try {
+      const owned = await provision(harness);
+      await connect(
+        harness,
+        owned,
+        (frame) => {
+          if (frame.type !== 'files.shares.request') {
+            return;
+          }
+          queueMicrotask(() => {
+            harness.context.agentConnections.resolveResponse(
+              owned.recordId,
+              String(frame.messageId),
+              {
+                shares: [
+                  {
+                    shareId: 'fotos1',
+                    displayName: 'Fotoauswahl (3)',
+                    kind: 'collection',
+                    capability: 'media.photos.read',
+                    addedAt: '2026-09-13T10:00:00.000Z',
+                  },
+                ],
+              },
+            );
+          });
+        },
+        ['media.photos.read'],
+      );
+      const sessionId = await openSession(harness, owned);
+
+      const response = await harness.app.inject({
+        method: 'GET',
+        url: `/api/v1/devices/${owned.recordId}/files/shares?sessionId=${sessionId}`,
+        headers: controlHeaders(owned.session),
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = response.json() as { shares: Array<{ kind: string; capability: string }> };
+      expect(body.shares[0]?.kind).toBe('collection');
+      expect(body.shares[0]?.capability).toBe('media.photos.read');
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('ends a session whose only capability was withdrawn', async () => {
+    const harness = await createHarness();
+    try {
+      const owned = await provision(harness);
+      await connect(harness, owned, () => undefined, ['media.videos.read']);
+      const sessionId = await openSession(harness, owned);
+
+      await harness.context.repositories.deviceCapabilities.setGranted({
+        deviceId: owned.recordId,
+        capability: 'media.videos.read',
+        granted: false,
+        grantedBy: owned.session.userId,
+      });
+
+      const response = await harness.app.inject({
+        method: 'GET',
+        url: `/api/v1/devices/${owned.recordId}/files/shares?sessionId=${sessionId}`,
+        headers: controlHeaders(owned.session),
+      });
+      expect(response.statusCode).toBe(403);
+      expect(errorCode(response)).toBe('CAPABILITY_DENIED');
     } finally {
       await harness.close();
     }

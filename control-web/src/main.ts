@@ -9,6 +9,7 @@ import {
   progressLabel,
   rootCrumb,
   secondsUntil,
+  shareLine,
   sortEntries,
   type Crumb,
 } from './files.ts';
@@ -24,6 +25,9 @@ import type {
 } from './types.ts';
 
 const POLL_INTERVAL_MS = 30_000;
+
+/** The capabilities that can govern a shared area (protocol section 8.3.1). */
+const SHARE_CAPABILITIES = ['files.read', 'media.photos.read', 'media.videos.read'];
 
 class ControlCenterApp {
   private readonly api = new FeedbackApi();
@@ -338,7 +342,19 @@ class ControlCenterApp {
         device,
         'files.read',
         'Dateizugriff (nur lesen)',
-        'Auflisten und Herunterladen in den Bereichen, die auf dem Gerät ausdrücklich freigegeben wurden. Kein Ändern, Löschen oder Ausführen.',
+        'Auflisten und Herunterladen in den Ordnern und Dateien, die auf dem Gerät ausdrücklich freigegeben wurden. Kein Ändern, Löschen oder Ausführen.',
+      ),
+      this.capabilityRow(
+        device,
+        'media.photos.read',
+        'Fotos (nur lesen)',
+        'Nur die Bilder, die auf dem Gerät über Androids Fotoauswahl ausgewählt wurden. Videos bleiben davon unberührt - das ist ein eigener Schalter.',
+      ),
+      this.capabilityRow(
+        device,
+        'media.videos.read',
+        'Videos (nur lesen)',
+        'Nur die Videos, die auf dem Gerät über Androids Fotoauswahl ausgewählt wurden. Fotos bleiben davon unberührt.',
       ),
     );
     return section.root;
@@ -407,8 +423,10 @@ class ControlCenterApp {
 
 
   private filesView(device: DeviceView): HTMLElement {
-    const section = card('Dateien', 'Nur lesen, nur freigegebene Bereiche');
-    const granted = device.serverGrantedCapabilities.includes('files.read');
+    const section = card('Dateien und Medien', 'Nur lesen, nur freigegebene Bereiche');
+    const granted = SHARE_CAPABILITIES.some((capability) =>
+      device.serverGrantedCapabilities.includes(capability),
+    );
 
     section.body.append(
       text(
@@ -420,7 +438,11 @@ class ControlCenterApp {
 
     if (!granted) {
       section.body.append(
-        text('p', 'Dateizugriff ist serverseitig nicht freigegeben.', 'small'),
+        text(
+          'p',
+          'Weder Dateizugriff noch Fotos noch Videos sind serverseitig freigegeben.',
+          'small',
+        ),
       );
       return section.root;
     }
@@ -478,7 +500,7 @@ class ControlCenterApp {
       const copy = div('stack tiny-gap');
       copy.append(
         text('strong', share.displayName),
-        text('span', share.kind === 'tree' ? 'Ordner' : 'Einzelne Datei', 'muted small'),
+        text('span', shareLine(share), 'muted small'),
       );
       const open = button('Öffnen', 'ghost small-button');
       open.disabled = this.busy;
@@ -881,7 +903,8 @@ class ControlCenterApp {
       if (capability === 'system.info') {
         this.systemInfo = null;
       }
-      if (capability === 'files.read' && !enabled) {
+      if (SHARE_CAPABILITIES.includes(capability) && !enabled) {
+        // The open session may have been opened for exactly this capability.
         this.resetFilesState();
       }
       await this.refreshDevices(false);

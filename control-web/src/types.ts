@@ -83,10 +83,14 @@ export interface AuditResponse {
   events: AuditEventView[];
 }
 
+export type ShareCapability = 'files.read' | 'media.photos.read' | 'media.videos.read';
+
 export interface FileShareView {
   shareId: string;
   displayName: string;
-  kind: 'tree' | 'file';
+  kind: 'tree' | 'file' | 'collection';
+  /** Exactly one capability governs an area (protocol section 8.3.1). */
+  capability: ShareCapability;
   addedAt: string;
 }
 
@@ -102,6 +106,8 @@ export interface FileEntryView {
 export interface FilesSessionView {
   sessionId: string;
   expiresAt: string;
+  /** What the server actually granted, which may be less than was asked for. */
+  capabilities: ShareCapability[];
   maxDownloadBytes: number;
 }
 

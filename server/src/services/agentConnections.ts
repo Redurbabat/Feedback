@@ -43,8 +43,8 @@ export class AgentOfflineError extends Error {
 }
 
 export class AgentCapabilityUnavailableError extends Error {
-  constructor(readonly capability: string) {
-    super(`device has not granted capability ${capability}`);
+  constructor(readonly capabilities: readonly string[]) {
+    super(`device has not granted any of: ${capabilities.join(', ')}`);
     this.name = 'AgentCapabilityUnavailableError';
   }
 }
@@ -174,7 +174,8 @@ export class AgentConnectionRegistry {
     deviceId: string;
     sessionId: string | null;
     messageId: string;
-    requiredCapability: string;
+    /** The connection must locally advertise at least one of these. */
+    requiredCapabilities: readonly string[];
     frame: string;
     timeoutMs: number;
   }): Promise<unknown> {
@@ -187,11 +188,15 @@ export class AgentConnectionRegistry {
       return Promise.reject(new AgentOfflineError());
     }
     const eligible = allConnections
-      .filter((entry) => entry.deviceGrantedCapabilities.includes(input.requiredCapability))
+      .filter((entry) =>
+        input.requiredCapabilities.some((capability) =>
+          entry.deviceGrantedCapabilities.includes(capability),
+        ),
+      )
       .sort((left, right) => right.lastMessageAt - left.lastMessageAt);
     const connection = eligible[0];
     if (connection === undefined) {
-      return Promise.reject(new AgentCapabilityUnavailableError(input.requiredCapability));
+      return Promise.reject(new AgentCapabilityUnavailableError(input.requiredCapabilities));
     }
 
     return new Promise<unknown>((resolve, reject) => {

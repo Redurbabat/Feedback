@@ -9,6 +9,7 @@ import {
   FILES_SESSION_TTL_MS,
   FILE_MAX_LIST_ENTRIES,
   FILE_NAME_MAX,
+  SHARE_CAPABILITIES_V1,
 } from '../../constants.js';
 import type { AppContext } from '../../context.js';
 import type { DeviceRecord, RemoteSessionRecord } from '../../db/repositories/types.js';
@@ -29,7 +30,12 @@ import { consumeRateLimit, requireCsrf } from '../guards.js';
 import { assertBrowserContext } from '../security.js';
 import { parseOrThrow } from '../validation.js';
 
-const CAPABILITY = 'files.read';
+/**
+ * The capabilities that can govern a shared area. A session may carry several; which one
+ * governs a given area is decided on the device, because only it knows where the area
+ * came from.
+ */
+const SHARE_CAPABILITIES: readonly string[] = SHARE_CAPABILITIES_V1;
 
 const paramsSchema = z.object({ id: z.string().uuid() }).strict();
 const opaqueIdSchema = z
@@ -71,7 +77,9 @@ const shareSchema = z
   .object({
     shareId: opaqueIdSchema,
     displayName: entryNameSchema,
-    kind: z.enum(['tree', 'file']),
+    kind: z.enum(['tree', 'file', 'collection']),
+    /** Exactly one capability governs an area (section 8.3.1). */
+    capability: z.enum(['files.read', 'media.photos.read', 'media.videos.read']),
     addedAt: z.string().min(20).max(40),
   })
   .strict();
@@ -98,6 +106,15 @@ const listResponseSchema = z
 const metadataResponseSchema = z.object({ entry: fileEntrySchema }).strict();
 
 const sessionBodySchema = z.object({ sessionId: z.string().uuid() }).strict();
+const openSessionBodySchema = z
+  .object({
+    /** Omitted means: everything the owner currently has effective. */
+    capabilities: z
+      .array(z.enum(['files.read', 'media.photos.read', 'media.videos.read']))
+      .min(1)
+      .optional(),
+  })
+  .strict();
 const sharesQuerySchema = z.object({ sessionId: z.string().uuid() }).strict();
 const entriesQuerySchema = z
   .object({
@@ -179,34 +196,62 @@ export async function registerFileRoutes(
       session.ownerId !== userId ||
       session.revokedAt !== null ||
       session.expiresAt <= now ||
-      !session.approvedCapabilities.includes(CAPABILITY)
+      !session.approvedCapabilities.some((capability) => SHARE_CAPABILITIES.includes(capability))
     ) {
       throw new ProtocolError('SESSION_EXPIRED', 'Dateisitzung ist nicht mehr gueltig');
     }
 
-    await requireLiveCapability(device);
+    // A session can outlive a grant. If every capability it was opened for has been
+    // withdrawn since, it is finished: the device would refuse every area anyway, and
+    // saying so here saves a pointless round trip.
+    const effective = await effectiveShareCapabilities(device);
+    if (!session.approvedCapabilities.some((capability) => effective.includes(capability))) {
+      throw new ProtocolError(
+        'CAPABILITY_DENIED',
+        'Keine der Freigaben dieser Sitzung ist noch wirksam',
+      );
+    }
+
     return { device, session, userId };
   }
 
-  /** Both sides must grant files.read, and the device must actually be connected. */
-  async function requireLiveCapability(device: DeviceRecord): Promise<void> {
+  /**
+   * The share capabilities granted on both sides right now.
+   *
+   * Each is evaluated on its own: there is no hierarchy, so media.photos.read never opens
+   * a files.read area, and files.read never opens a media one.
+   */
+  async function effectiveShareCapabilities(device: DeviceRecord): Promise<readonly string[]> {
     const serverGranted = grantedCapabilities(
       await context.repositories.deviceCapabilities.listForDevice(device.id),
     );
-    if (!serverGranted.includes(CAPABILITY)) {
-      throw new ProtocolError('CAPABILITY_DENIED', 'files.read ist serverseitig nicht freigegeben');
+    const grantedHere = SHARE_CAPABILITIES.filter((capability) =>
+      serverGranted.includes(capability),
+    );
+    // Checked in this order on purpose: "nothing is released" and "the device is not
+    // reachable" are different problems, and the caller can only act on the right one.
+    if (grantedHere.length === 0) {
+      throw new ProtocolError(
+        'CAPABILITY_DENIED',
+        'Kein Lesezugriff ist serverseitig freigegeben',
+      );
     }
 
     const connections = context.agentConnections.snapshotsForDevice(device.id);
     if (connections.length === 0) {
       throw new ProtocolError('SESSION_EXPIRED', 'Geraet ist nicht verbunden');
     }
-    if (!connections.some((entry) => entry.deviceGrantedCapabilities.includes(CAPABILITY))) {
+
+    const effective = grantedHere.filter((capability) =>
+      connections.some((entry) => entry.deviceGrantedCapabilities.includes(capability)),
+    );
+    if (effective.length === 0) {
       throw new ProtocolError(
         'CAPABILITY_DENIED',
-        'files.read ist auf dem Geraet nicht freigegeben',
+        'Kein Lesezugriff ist auf dem Geraet freigegeben',
       );
     }
+    return effective;
   }
 
   /** One request/response round trip inside a files session. */
@@ -221,7 +266,7 @@ export async function registerFileRoutes(
         deviceId: access.device.id,
         sessionId: access.session.id,
         messageId,
-        requiredCapability: CAPABILITY,
+        requiredCapabilities: access.session.approvedCapabilities,
         frame: agentFrame(type, payload, context.clock.now(), access.session.id, messageId),
         timeoutMs: AGENT_REQUEST_TIMEOUT_MS,
       });
@@ -239,11 +284,24 @@ export async function registerFileRoutes(
     const params = parseOrThrow(paramsSchema, request.params);
     consumeRateLimit(context, 'filesSession', 'user', principal.user.id);
 
+    const body = parseOrThrow(openSessionBodySchema, request.body ?? {});
+
     const device = await requireOwnedDevice(context, principal.user.id, params.id);
     if (device.revokedAt !== null) {
       throw new ProtocolError('DEVICE_REVOKED', 'Geraet wurde widerrufen');
     }
-    await requireLiveCapability(device);
+
+    const effective = await effectiveShareCapabilities(device);
+    // Asking for nothing in particular means "whatever is effective"; asking for
+    // something specific never widens beyond that.
+    const requested = body.capabilities ?? effective;
+    const approved = requested.filter((capability) => effective.includes(capability));
+    if (approved.length === 0) {
+      throw new ProtocolError(
+        'CAPABILITY_DENIED',
+        'Keine der angefragten Freigaben ist auf beiden Seiten wirksam',
+      );
+    }
 
     const now = context.clock.now();
     const session = await context.repositories.remoteSessions.create({
@@ -252,8 +310,8 @@ export async function registerFileRoutes(
       // Longer than a one-shot session: browsing is a conversation, and a listing
       // that expires halfway through is worse than useless.
       expiresAt: now + FILES_SESSION_TTL_MS,
-      requestedCapabilities: [CAPABILITY],
-      approvedCapabilities: [CAPABILITY],
+      requestedCapabilities: requested,
+      approvedCapabilities: approved,
     });
 
     await context.audit.record({
@@ -262,11 +320,13 @@ export async function registerFileRoutes(
       userId: principal.user.id,
       deviceId: device.deviceId,
       sessionId: session.id,
+      detail: { capabilities: approved.join(',') },
     });
 
     return {
       sessionId: session.id,
       expiresAt: new Date(session.expiresAt).toISOString(),
+      capabilities: approved,
       maxDownloadBytes: context.config.fileMaxDownloadBytes,
     };
   });

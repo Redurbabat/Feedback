@@ -1,4 +1,4 @@
-import type { FileEntryView } from './types.ts';
+import type { FileEntryView, FileShareView, ShareCapability } from './types.ts';
 
 /**
  * Presentation rules for the files browser.
@@ -48,6 +48,40 @@ export function sortEntries(entries: readonly FileEntryView[]): FileEntryView[] 
     }
     return left.name.localeCompare(right.name, 'de-DE', { numeric: true, sensitivity: 'base' });
   });
+}
+
+/** What kind of area this is, in the owner's words. */
+export function shareKindLabel(kind: FileShareView['kind']): string {
+  switch (kind) {
+    case 'tree':
+      return 'Ordner';
+    case 'file':
+      return 'Einzelne Datei';
+    case 'collection':
+      return 'Auswahl';
+  }
+}
+
+/** Which switch governs this area. */
+export function capabilityLabel(capability: ShareCapability): string {
+  switch (capability) {
+    case 'files.read':
+      return 'Dateizugriff';
+    case 'media.photos.read':
+      return 'Fotos';
+    case 'media.videos.read':
+      return 'Videos';
+  }
+}
+
+/**
+ * The line under a shared area.
+ *
+ * The governing capability is named because two areas can look alike and answer to
+ * different switches - without it the owner cannot tell which toggle would close one.
+ */
+export function shareLine(share: FileShareView): string {
+  return `${shareKindLabel(share.kind)} · ${capabilityLabel(share.capability)}`;
 }
 
 export function formatBytes(value: number): string {
