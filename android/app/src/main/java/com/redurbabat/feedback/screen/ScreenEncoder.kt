@@ -37,6 +37,9 @@ class ScreenEncoder(
     private var inputSurface: Surface? = null
     private var announced = false
 
+    /** SPS/PPS, kept so every keyframe can carry them (protocol section 8.5.5). */
+    private var configBytes: ByteArray = ByteArray(0)
+
     val surface: Surface? get() = inputSurface
 
     fun start() {
@@ -86,6 +89,7 @@ class ScreenEncoder(
             // Already stopped; releasing is still the right next step.
         }
         encoder?.release()
+        configBytes = ByteArray(0)
         inputSurface?.release()
         inputSurface = null
         thread?.quitSafely()
@@ -119,10 +123,14 @@ class ScreenEncoder(
             if (bytes.isEmpty() || !announced) {
                 return
             }
+            val keyFrame = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
             ScreenCaptureCoordinator.frame(
                 EncodedScreenFrame(
-                    data = bytes,
-                    keyFrame = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0,
+                    // Adds nothing when the encoder already prepended the header, which it does
+                    // from API 29 on. Below that, and on encoders that ignore the hint, this is
+                    // the only reason a keyframe is usable at all.
+                    data = if (keyFrame) ScreenFrameHeader.withHeader(bytes, configBytes) else bytes,
+                    keyFrame = keyFrame,
                     timestampUs = info.presentationTimeUs,
                 ),
             )
@@ -161,6 +169,7 @@ class ScreenEncoder(
             return
         }
         announced = true
+        this.configBytes = configBytes
         ScreenCaptureCoordinator.started(
             ScreenStreamConfig(
                 width = settings.width,

@@ -175,3 +175,37 @@ class ScreenEncoderPlanTest {
         assertTrue(settings.bitrateKbps > 0)
     }
 }
+
+class ScreenFrameHeaderTest {
+
+    private val header = byteArrayOf(0, 0, 0, 1, 0x67, 0x42, 0xE0.toByte(), 0x1E)
+
+    @Test
+    fun `prepends the configuration to a keyframe that lacks it`() {
+        val frame = byteArrayOf(0, 0, 0, 1, 0x65, 0x11)
+        val result = ScreenFrameHeader.withHeader(frame, header)
+        assertEquals(header.size + frame.size, result.size)
+        assertTrue((header + frame).contentEquals(result))
+    }
+
+    @Test
+    fun `leaves a keyframe that already carries it untouched`() {
+        val frame = header + byteArrayOf(0, 0, 0, 1, 0x65, 0x11)
+        // The encoder prepends it itself from API 29 on; doing it twice would waste bytes on
+        // every keyframe for the life of the stream.
+        assertTrue(frame === ScreenFrameHeader.withHeader(frame, header))
+    }
+
+    @Test
+    fun `does nothing without a configuration to add`() {
+        val frame = byteArrayOf(1, 2, 3)
+        assertTrue(frame === ScreenFrameHeader.withHeader(frame, ByteArray(0)))
+    }
+
+    @Test
+    fun `treats a frame shorter than the header as lacking it`() {
+        val frame = byteArrayOf(0, 0)
+        val result = ScreenFrameHeader.withHeader(frame, header)
+        assertEquals(header.size + frame.size, result.size)
+    }
+}

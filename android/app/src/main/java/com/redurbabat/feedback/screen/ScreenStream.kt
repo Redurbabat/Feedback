@@ -206,6 +206,44 @@ class ScreenSendWindow(
     }
 }
 
+/**
+ * Makes sure every keyframe carries its own SPS/PPS.
+ *
+ * Protocol section 8.5.5 requires the device to repeat the encoder configuration before every
+ * keyframe, and it means every keyframe on every Android version. `KEY_PREPEND_HEADER_TO_SYNC_FRAMES`
+ * only exists from API 29 and is a hint even there, so relying on it alone would produce a stream
+ * that decodes on a new phone and fails on an older one - with no error either side could
+ * attribute, because the frames look perfectly well formed.
+ *
+ * A viewer configured for Annex-B has nothing to start from without those bytes, and a keyframe
+ * without them is exactly as useless as no keyframe at all.
+ */
+object ScreenFrameHeader {
+
+    /** Returns [frame] unchanged when it already begins with [header]. */
+    fun withHeader(frame: ByteArray, header: ByteArray): ByteArray {
+        if (header.isEmpty() || startsWith(frame, header)) {
+            return frame
+        }
+        val combined = ByteArray(header.size + frame.size)
+        header.copyInto(combined, 0)
+        frame.copyInto(combined, header.size)
+        return combined
+    }
+
+    private fun startsWith(data: ByteArray, prefix: ByteArray): Boolean {
+        if (data.size < prefix.size) {
+            return false
+        }
+        for (index in prefix.indices) {
+            if (data[index] != prefix[index]) {
+                return false
+            }
+        }
+        return true
+    }
+}
+
 /** One piece of one frame, ready to go into a `screen.frame` payload. */
 class ScreenFrameChunk(
     val chunkIndex: Int,

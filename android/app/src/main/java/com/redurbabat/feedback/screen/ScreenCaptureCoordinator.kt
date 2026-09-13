@@ -32,7 +32,12 @@ object ScreenCaptureCoordinator {
 
     fun begin(streamId: String, settings: ScreenEncoderSettings, listener: ScreenCaptureListener) {
         pendingRef.set(Pending(streamId, settings))
-        listenerRef.set(listener)
+        // Only one capture exists at a time, and one agent connection means one handler, which
+        // refuses a second start itself. Should a second connection ever get here anyway, the
+        // request it displaces is told it is over instead of waiting for frames that now belong
+        // to someone else. It cannot skip a consent either way: the new request goes through
+        // both dialogs like any other.
+        listenerRef.getAndSet(listener)?.onStopped(ScreenStopReason.CLIENT_CANCELLED)
     }
 
     fun consent(state: ScreenConsentState) {

@@ -823,14 +823,26 @@ class ControlCenterApp {
         this.finishScreen('encoder_error');
       },
     });
-    // No `description`: the device sends Annex-B and repeats SPS/PPS before every
-    // keyframe, which is what lets a viewer resynchronise after a lost frame.
-    decoder.configure({
-      codec: config.codec,
-      codedWidth: config.width,
-      codedHeight: config.height,
-      optimizeForLatency: true,
-    });
+    try {
+      // No `description`: the device sends Annex-B and repeats SPS/PPS before every
+      // keyframe, which is what lets a viewer resynchronise after a lost frame.
+      decoder.configure({
+        codec: config.codec,
+        codedWidth: config.width,
+        codedHeight: config.height,
+        optimizeForLatency: true,
+      });
+    } catch {
+      // The browser has WebCodecs but not this profile. Naming the codec is the only
+      // way the owner can tell that from a broken connection.
+      decoder.close();
+      this.message = {
+        kind: 'error',
+        text: `Dieser Browser kann ${config.codec} nicht dekodieren.`,
+      };
+      this.finishScreen('encoder_error');
+      return;
+    }
     active.decoder = decoder;
   }
 

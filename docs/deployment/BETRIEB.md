@@ -119,6 +119,35 @@ hintereinander ist das der Unterschied zwischen "Update" und "jedes Mal neu kopp
 8. Geraet im Control Center widerrufen. Die App muss das bemerken und in den Zustand `REVOKED`
    gehen.
 
+### 3.5 Bildschirm (`screen.view`)
+
+Der Teil mit den meisten ungepruefeten Annahmen. Schritte 1 bis 4 aus 3.4 muessen stehen.
+
+1. Auf dem Handy "Bildschirm zeigen" freigeben (fragt die App-Sperre ab), im Control Center
+   dieselbe Capability freigeben.
+2. Im Control Center "Bildschirm anfragen". Auf dem Handy muessen **zwei** Dialoge erscheinen:
+   erst Feedbacks eigene Rueckfrage, danach Androids MediaProjection-Dialog. Erscheint nur einer,
+   ist das ein Fehler.
+3. Erst ablehnen. Im Control Center muss "Am Geraet abgelehnt" stehen, kein Timeout, und es darf
+   kein Bild kommen.
+4. Neu anfragen und zustimmen. Das Bild muss erscheinen; in der Statusleiste muss Androids eigene
+   Aufnahme-Anzeige stehen **und** Feedbacks Benachrichtigung mit "Stoppen".
+5. Pruefen, was 4.16 im Threat Model offen laesst: laesst sich die Feedback-Benachrichtigung
+   wegwischen? Bleibt Androids Anzeige, wenn man den Benachrichtigungskanal stummschaltet?
+   Das Ergebnis gehoert ins Threat Model, egal wie es ausfaellt.
+6. "Stoppen" in der Benachrichtigung druecken. Das Bild muss sofort aufhoeren, und Androids
+   Aufnahme-Anzeige muss verschwinden.
+7. Neu starten, dann das Handy in den Flugmodus schalten. Die Aufnahme muss **sofort** enden -
+   nicht erst nach einer Zeitueberschreitung (Protokoll 8.5.9). Androids Anzeige ist der Beweis.
+8. Neu starten und die App-Sperre oeffnen. Im Bild muss die PIN-Eingabe **schwarz** sein
+   (`FLAG_SECURE`). Ist sie lesbar, ist das ein Sicherheitsfehler und kein Schoenheitsfehler.
+9. Waehrend der Uebertragung `screen.view` im Control Center entziehen. Das Bild muss sofort
+   enden, nicht erst nach zehn Minuten.
+10. Ueber Mobilfunk wiederholen. Latenz und Bildrate notieren - bei 15 fps und 2500 kbit/s ist
+    das der Punkt, an dem sich zeigt, ob der Serverpfad (ADR-004) in der Praxis taugt.
+11. Zehn Minuten laufen lassen. Nach `SCREEN_SESSION_TTL_MS` muss Schluss sein, und ein neuer
+    Blick muss beide Zustimmungen erneut verlangen.
+
 ## 4. Ehrliche Grenzen / offen
 
 - **Presence und Rate Limits liegen im Arbeitsspeicher.** Der Server ist damit
@@ -139,7 +168,9 @@ hintereinander ist das der Unterschied zwischen "Update" und "jedes Mal neu kopp
 - Der Server wurde in dieser Umgebung nie gegen ein echtes Geraet gestartet.
 - Es gab noch keinen Pairing-Durchlauf mit einem Handy.
 - Der Release-Workflow ist nie gelaufen (er loest erst auf `main` aus).
-- Kein Schritt aus Abschnitt 3.4 wurde durchgefuehrt.
+- Kein Schritt aus Abschnitt 3.4 oder 3.5 wurde durchgefuehrt.
+- Von der Bildschirmuebertragung ist auf echter Hardware **nichts** geprueft: weder die beiden
+  Dialoge, noch die Benachrichtigung, noch der Stop, noch der Encoder.
 
 Was verifiziert ist, ist die Schicht darunter: Server-Typecheck und Tests, Control-Web-Build und
 Tests, Android-Build, Lint und Unit-Tests in CI. Dass die Teile einzeln stimmen, ist kein Beweis,
