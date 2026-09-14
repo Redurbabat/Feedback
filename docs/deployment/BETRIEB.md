@@ -40,6 +40,30 @@ Davor gehoert ein Reverse Proxy oder ein Tunnel.
 
 ## 3. Bedienung
 
+Fuenf Wege nach draussen. Was sie unterscheidet:
+
+| Weg | Adresse | Kosten | Server laeuft | Klartext sieht ausser Ihnen |
+| --- | --- | --- | --- | --- |
+| 3.1 Schnelltunnel | wechselt bei jedem Start | 0 | zu Hause | Cloudflare (4.19) |
+| 3.1.1 benannter Tunnel | fest | Domain, ca. 10 EUR/Jahr | zu Hause | Cloudflare (4.19) |
+| 3.1.3 Tailscale Funnel | fest | 0 | zu Hause | niemand |
+| 3.1.4 freie Subdomain + VM | fest | 0 | beim Anbieter | der Anbieter (4.15) |
+| 3.2 eigener Host | fest | Domain + Server | beim Anbieter | der Anbieter (4.15) |
+
+**Was eine eigene Domain bringt.** Keine Capability und keine zusaetzliche Sicherheit - die App
+kann mit `*.ts.net` genau dasselbe. Sie kauft zwei andere Dinge:
+
+- **Die feste Adresse aus 3.1.1.** Ohne sie muss nach jedem Serverstart jedes Geraet neu gekoppelt
+  werden.
+- **Unabhaengigkeit vom Anbieter.** `*.ts.net` gehoert Tailscale, `*.duckdns.org` gehoert DuckDNS.
+  Wer spaeter den Weg oder den Hoster wechselt, aendert damit die Server-URL - und weil die
+  Registrierung auf dem Geraet an der Adresse haengt, muss **jedes gekoppelte Geraet neu
+  gekoppelt werden**. Eine eigene Domain zeigt stattdessen einfach woanders hin, und die Geraete
+  merken nichts davon.
+
+Die feste Adresse allein gibt es in 3.1.3 auch umsonst. Wer nie wechseln will, braucht keine
+Domain.
+
 ### 3.1 Schnellster Weg zum ersten Test: Tunnel
 
 Ohne Server mieten, in wenigen Minuten. Ein Tunneldienst (z. B. Cloudflare Tunnel) gibt einen
@@ -54,7 +78,10 @@ tools/first-run.sh https://<dein-tunnel-host>
 Das Skript legt `.env` an (mit frisch erzeugtem Cookie-Secret), installiert, baut Control Center
 und Server, wendet die Migrationen an und sagt, welcher Befehl als naechstes dran ist. Es richtet
 bewusst **keinen** Tunnel ein: welcher Dienst die Verbindung nach aussen traegt, ist eine
-Vertrauensentscheidung des Besitzers.
+Vertrauensentscheidung des Besitzers. Bei Cloudflare endet das oeffentliche HTTPS an deren Rand,
+nicht auf Ihrer Maschine - Cloudflare sieht damit Dateiinhalte, Bildframes und das Sitzungscookie
+im Klartext (Bedrohung 4.19). Fuer einen ersten Test ist das vertretbar, als Dauerzustand ist es
+eine Entscheidung, die man bewusst trifft.
 
 Es setzt dabei `FEEDBACK_STATIC_DIR`, sodass der Server das gebaute Control Center **selbst**
 ausliefert. Damit gibt es eine Origin statt zweier: das HttpOnly-Cookie braucht keine Ausnahme,

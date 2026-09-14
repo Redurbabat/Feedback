@@ -229,10 +229,11 @@ also genau so wirkungslos und haette zusaetzlich NAT-Traversal, ein Relay und ei
 Uebertragungsstrecke mitgebracht.
 
 **Residual** Wer den Server betreibt, kann zusehen. Der Widerrufspfad ist organisatorisch, nicht
-technisch: **den Server selbst betreiben** (`docs/deployment/BETRIEB.md`). Echte Ende-zu-Ende-
-Verschluesselung braucht einen Schluessel auf Browserseite, den das Geraet aus dem Pairing kennt,
-und eine Bindung des Medienschluessels an den Geraeteschluessel im Keystore. Beides existiert
-nicht und steht als Punkt 6 in Abschnitt 6.
+technisch: **den Server selbst betreiben** (`docs/deployment/BETRIEB.md`). Das allein genuegt
+nicht, wenn der Weg dorthin durch einen Tunnel fuehrt, der TLS selbst beendet - siehe 4.19.
+Echte Ende-zu-Ende-Verschluesselung braucht einen Schluessel auf Browserseite, den das Geraet aus
+dem Pairing kennt, und eine Bindung des Medienschluessels an den Geraeteschluessel im Keystore.
+Beides existiert nicht und steht als Punkt 6 in Abschnitt 6.
 
 ### 4.16 Der Strom laeuft weiter, ohne dass der Besitzer es merkt
 
@@ -305,6 +306,26 @@ Eine Zwei-Faktor-SMS in einer Benachrichtigung ist im Bild. Dagegen hilft nur, d
 starten; deshalb ist `screen.view` eine eigene Capability ohne jede implizite Herleitung und
 deshalb ist die Sitzung hart befristet.
 
+### 4.19 Der Tunneldienst sieht mit
+
+**Impact** hoch. **Likelihood** hoch, sobald der Tunnel TLS selbst beendet.
+**Mitigation** 4.15 nennt als Widerrufspfad "den Server selbst betreiben". Das genuegt nicht, wenn
+der Weg dorthin durch einen fremden Dienst fuehrt, der die TLS-Verbindung beendet. Bei einem
+Cloudflare-Tunnel - dem Weg aus `BETRIEB.md` 3.1 und 3.1.1 - endet das oeffentliche HTTPS an
+Cloudflares Rand, und von dort laeuft eine zweite, getrennte Verbindung zu `cloudflared`.
+Cloudflare sieht dazwischen denselben Klartext wie der Serverbetreiber in 4.15: Dateiinhalte,
+`system.info`, jeden `screen.frame` - und das Sitzungscookie.
+
+Tailscale Funnel (`BETRIEB.md` 3.1.3) verhaelt sich anders: das Zertifikat liegt auf der eigenen
+Maschine, `tailscaled` beendet TLS dort, und die Relays leiten nur verschluesselte Bytes weiter.
+Dadurch kommt kein zusaetzlicher Mitleser hinzu.
+
+**Residual** Wer einen TLS-beendenden Tunnel waehlt, hat einen zweiten Betreiber mit denselben
+Moeglichkeiten wie in 4.15 - anders als dort ist es aber eine freie Wahl. Deshalb richtet
+`tools/first-run.sh` bewusst keinen Tunnel ein: welcher Dienst die Verbindung nach aussen traegt,
+ist eine Vertrauensentscheidung des Besitzers. Technisch aufloesen laesst sich auch das nur mit
+Punkt 6 aus Abschnitt 6.
+
 ## 5. Wiederkehrende Muster
 
 Drei Entscheidungen tauchen in fast jeder Zeile oben auf:
@@ -325,9 +346,10 @@ Ungeloest, nach Nutzen sortiert:
 3. **Keine Rotation des `deviceToken`** (4.13).
 4. **Rate Limits und Presence nur im Prozessspeicher** (4.14).
 5. Kein Pinning der Server-Identitaet an den beim Pairing gesehenen Schluessel (TOFU waere moeglich).
-6. **Keine Ende-zu-Ende-Verschluesselung der Inhalte** gegenueber dem Serverbetreiber - weder fuer
-   Dateien noch fuer Bildframes (4.15). Das ist der groesste offene Punkt der Liste und der
-   einzige, dessen Loesung neue Kryptografie braucht statt nur Sorgfalt.
+6. **Keine Ende-zu-Ende-Verschluesselung der Inhalte** gegenueber dem Serverbetreiber und gegen
+   einen TLS-beendenden Tunnel - weder fuer Dateien noch fuer Bildframes (4.15, 4.19). Das ist
+   der groesste offene Punkt der Liste und der einzige, dessen Loesung neue Kryptografie braucht
+   statt nur Sorgfalt.
 7. **Kein Schutz fremder Oberflaechen gegen Remote-Input**, falls `screen.control` je gebaut wird
    (Abschnitt 7 und ADR-005). Fuer Feedbacks eigene Bildschirme gibt es eine Massnahme, fuer die
    aller anderen Apps nicht.
