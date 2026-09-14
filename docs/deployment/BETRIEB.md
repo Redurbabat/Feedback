@@ -159,9 +159,17 @@ jeder den Header faelschen.
 
 ### 3.1.2 Ohne eigene Domain
 
-Wer keine Domain kaufen will, bekommt einen festen Hostnamen auch bei einem kleinen
-Node-Hoster - dort laeuft dann aber der Server selbst, nicht nur der Tunnel. Zu pruefen sind drei
-Dinge, sonst passt es nicht zu diesem Server:
+Eine eigene Domain kostet rund 10 EUR im Jahr und macht 3.1.1 sofort moeglich - billiger als ein
+Monat gemieteter Server. Wer das nicht ausgeben will, hat trotzdem zwei Wege, die dauerhaft und
+kostenlos laufen: 3.1.3 (Server bleibt zu Hause) und 3.1.4 (Server bei einem Anbieter).
+
+Kein Zertifikat gibt es nur fuer eine **nackte IP-Adresse**. Ein kostenloser Hostname wie
+`*.ts.net` oder `*.duckdns.org` ist dagegen eine Domain wie jede andere, und Let's Encrypt stellt
+dafuer ein gueltiges Zertifikat aus. `ServerEndpoint` verlangt sauberes HTTPS, nicht eine gekaufte
+Domain.
+
+Wer stattdessen einen kleinen Node-Hoster nimmt, prueft drei Dinge, sonst passt es nicht zu
+diesem Server:
 
 - **Kein Schlafmodus.** Ein Dienst, der bei Untaetigkeit einschlaeft, trennt die Agent-Verbindung;
   das Geraet gilt dann als offline. Kostenlose Stufen tun das haeufig.
@@ -176,6 +184,74 @@ Ihnen.
 **Nicht geeignet: Cloudflare Workers.** Kein Dateisystem fuer SQLite, keine nativen Module, kein
 langlebiger Prozess fuer Presence und laufende Uebertragungen, und `ws` laeuft dort nicht. Das
 waere ein Umbau auf Durable Objects, keine Deployment-Einstellung.
+
+### 3.1.3 Kostenlos und dauerhaft: Tailscale Funnel
+
+Der Weg mit der besten Sicherheitseigenschaft - vorausgesetzt, eine Maschine zu Hause kann
+durchlaufen (alter Laptop, Raspberry Pi, NAS). Der Server bleibt dort, Funnel gibt ihm einen
+festen oeffentlichen Hostnamen. Keine Portfreigabe, keine feste IP, funktioniert auch hinter
+CGNAT.
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+```
+
+In der Admin-Konsole einmalig HTTPS-Zertifikate fuer das Tailnet aktivieren und `funnel` in den
+Access Controls fuer diesen Knoten erlauben. Danach:
+
+```bash
+tailscale funnel --bg 8080
+tailscale funnel status          # nennt den Hostnamen <maschine>.<tailnet>.ts.net
+```
+
+Der Hostname bleibt derselbe, solange der Knoten im Tailnet bleibt - genau das, was die
+Registrierung auf dem Geraet braucht (siehe 3.1.1).
+
+```bash
+tools/first-run.sh https://<maschine>.<tailnet>.ts.net
+cd server && npm start
+```
+
+**Warum das der sicherste kostenlose Weg ist.** Das Zertifikat liegt auf der eigenen Maschine, und
+`tailscaled` terminiert die TLS-Verbindung dort. Die Funnel-Relays leiten nur verschluesselte
+Bytes weiter und sehen den Klartext nicht. Es kommt also kein weiterer Betreiber hinzu, der unter
+Bedrohung 4.15 faellt - der Server bleibt bei Ihnen.
+
+**`FEEDBACK_TRUST_PROXY` bleibt hier aus.** Funnel setzt `X-Forwarded-For` nicht selbst und reicht
+einen vom Client mitgeschickten Wert durch; mit `true` koennte deshalb jeder das Rate Limit
+umgehen. Der Preis fuer `false` ist kleiner: alle Anfragen kommen scheinbar von wenigen
+Relay-Adressen, das Limit pro IP wirkt dadurch wie ein gemeinsames Limit.
+
+**Ungeprueft: Durchsatz fuer `screen.view`.** Tailscale nennt keine Zahl fuer die
+Funnel-Bandbreite und beschreibt Funnel als Weg, einen Dienst zu teilen, nicht als Transport fuer
+dauerhaft hohen Durchsatz. `system.info` und `files.*` sind klein, der Bildstrom laeuft bis zu
+`SCREEN_MAX_BITRATE_KBPS` (2500 kbit/s). Ob das durchgeht, ist hier nicht getestet - das zeigt
+erst 3.5 auf echter Hardware.
+
+### 3.1.4 Kostenlos und dauerhaft: freie Subdomain und eigener Server
+
+Fuer den Fall, dass zu Hause keine Maschine durchlaufen kann. Beide Teile sind kostenlos:
+
+- **Hostname:** ein kostenloser DNS-Dienst, z. B. `<name>.duckdns.org`. Let's Encrypt stellt
+  dafuer ein Zertifikat aus - per DNS-01-Challenge auch dann, wenn Port 80 nicht offen ist.
+- **Maschine:** eine Always-Free-VM (z. B. Oracle Cloud). Sie schlaeft nicht ein, hat einen
+  dauerhaften Datentraeger und laeuft als ein Prozess; die drei Bedingungen aus 3.1.2 sind
+  erfuellt.
+
+Danach gilt 3.2 unveraendert: Reverse Proxy mit Zertifikat davor, `NODE_ENV=production`,
+`FEEDBACK_TRUST_PROXY=true` nur wenn dieser Proxy `X-Forwarded-For` selbst setzt, und ein
+Dienst-Manager.
+
+Drei Dinge, die auf diesem Weg wirklich stoeren koennen:
+
+- **Untaetige Instanzen werden eingesammelt.** Oracle behaelt sich vor, Always-Free-Instanzen
+  zurueckzuholen, die ueber sieben Tage kaum Last haben. Dieser Server ist die meiste Zeit genau
+  das. Wer den Weg geht, braucht ein Backup der SQLite-Datei und muss mit Ausfall rechnen.
+- **Kapazitaet.** Die kostenlosen ARM-Instanzen sind in vielen Regionen ausgebucht, und die
+  Heimatregion laesst sich spaeter nicht mehr wechseln.
+- **Bedrohung 4.15 gilt voll.** Der Anbieter hat den Klartext im Zugriff - Dateien, `system.info`
+  und den Bildstrom. Bei 3.1.3 ist das nicht so.
 
 ### 3.2 Dauerhafter Weg: eigener Host
 
@@ -253,6 +329,10 @@ Der Teil mit den meisten ungepruefeten Annahmen. Schritte 1 bis 4 aus 3.4 muesse
 - **Kein Monitoring.** Ein abgestuerzter Prozess faellt dadurch auf, dass Geraete offline gehen.
 - Ein Tunnel-Hostname wechselt je nach Dienst bei jedem Start. Aendert sich die Server-URL,
   muss das Geraet neu gekoppelt werden - die Registrierung haengt an der Adresse.
+- **Kein Transportweg aus 3.1 ist unter Last gemessen worden.** Weder Cloudflare-Tunnel noch
+  Tailscale Funnel sind hier mit einem laufenden Bildstrom getestet worden; fuer Funnel gibt es
+  ausserdem keine veroeffentlichte Bandbreitenzahl. Ob `screen.view` ueber den gewaehlten Weg
+  fluessig bleibt, entscheidet sich erst im Test aus 3.5.
 
 ## 5. Abnahme
 
