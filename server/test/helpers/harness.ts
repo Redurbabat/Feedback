@@ -38,6 +38,9 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     databaseFile: ':memory:',
     cookieSecret: randomBytes(32).toString('base64url'),
     allowedOrigins: [TEST_ORIGIN],
+    // Unset by default: naming this server's own address on the setup page is a deployment
+    // decision, and a test that silently got one would not tell "not configured" from "wrong".
+    publicOrigin: undefined,
     sessionTtlMs: 12 * 60 * 60 * 1000,
     fileMaxDownloadBytes: FILE_MAX_DOWNLOAD_BYTES,
     // API only in tests: serving the control center is a deployment convenience, and a test

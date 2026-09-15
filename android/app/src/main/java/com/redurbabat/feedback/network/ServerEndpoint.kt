@@ -36,6 +36,9 @@ data class ServerEndpoint private constructor(
         /** Longest single label between two dots. */
         const val MAX_LABEL_LENGTH = 63
 
+        /** The port that is never part of an origin's written form. */
+        const val HTTPS_PORT = 443
+
         fun parse(value: String): ServerEndpoint {
             val trimmed = value.trim().removeSuffix("/")
             require(trimmed.isNotEmpty()) { "Server URL must not be empty" }
@@ -56,7 +59,10 @@ data class ServerEndpoint private constructor(
                 "Feedback server needs a real host name, not an address literal"
             }
             require(uri.port == -1 || uri.port in 1..65_535) { "Server port is out of range" }
-            val port = if (uri.port == -1) "" else ":${uri.port}"
+            // 443 written out and 443 left out are the same origin, and the comparison a setup
+            // link is judged by is character equality. A browser and the server both drop it
+            // (RFC 6454), so an anchor that kept it would refuse every real link to itself.
+            val port = if (uri.port == -1 || uri.port == HTTPS_PORT) "" else ":${uri.port}"
             return ServerEndpoint("https://$host$port")
         }
 

@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { RATE_LIMITS } from '../../src/http/rateLimit.js';
 import { createHarness } from '../helpers/harness.js';
 
 /**
@@ -92,6 +93,29 @@ describe('control center served from the API origin', () => {
     }
   });
 
+  it('still rate limits an unknown API path, although the SPA fallback owns it', async () => {
+    // The static plugin registers `/*`, so an unknown path under /api/v1 matches *that* route.
+    // Reading the matched route as "not the API" switched the per-IP ceiling of protocol section
+    // 11 off for every such path and answered it with the document CSP - only while
+    // FEEDBACK_STATIC_DIR was set, which is the deployment BETRIEB.md 3.1 recommends.
+    const harness = await createHarness({ staticDir: buildSite() });
+    try {
+      const codes: number[] = [];
+      for (let attempt = 0; attempt <= RATE_LIMITS.apiDefault.limit; attempt += 1) {
+        const response = await harness.app.inject({ method: 'GET', url: '/api/v1/gibtesnicht' });
+        codes.push(response.statusCode);
+      }
+      expect(codes).toContain(429);
+
+      // The deep link next to it is a document and keeps working - the fix must not turn the
+      // whole fallback into the API.
+      const deep = await harness.app.inject({ method: 'GET', url: '/devices/irgendwas' });
+      expect(deep.statusCode).toBe(200);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('does not turn a wrong method into the app', async () => {
     const harness = await createHarness({ staticDir: buildSite() });
     try {
@@ -162,6 +186,10 @@ describe('control center served from the API origin', () => {
         expect(allows(csp, kind, "'unsafe-eval'"), `${kind} in ${csp}`).toBe(false);
       }
       expect(directives(csp).get('frame-ancestors'), csp).toEqual(["'none'"]);
+      // Not even `data:` for an image. The QR code is inline SVG on purpose (control-web/qr.ts),
+      // so the allowance that used to be here covered nothing the bundle actually loads.
+      expect(allows(csp, 'img-src', 'data:'), csp).toBe(false);
+      expect(directives(csp).get('img-src'), csp).toEqual(["'self'"]);
     } finally {
       await harness.close();
     }

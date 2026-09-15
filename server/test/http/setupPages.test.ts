@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { anchorOrigin } from '../../src/config.js';
 import { RATE_LIMITS } from '../../src/http/rateLimit.js';
 import {
   DEFAULT_METADATA,
@@ -148,35 +149,117 @@ describe('GET /pair', () => {
     }
   });
 
-  it('shows a configured origin, never the Host header of the request', async () => {
-    const harness = await createHarness();
+  it('names the address it was configured to name', async () => {
+    const harness = await createHarness({ publicOrigin: 'https://feedback.example.com' });
     try {
-      const response = await harness.app.inject({
-        method: 'GET',
-        url: '/pair',
-        headers: { host: 'boese.example' },
-      });
-      expect(response.body).not.toContain('boese.example');
-      // Falls back to the advertised origin instead of repeating what the caller asked for.
-      expect(response.body).toContain('http://localhost:5173');
+      const response = await harness.app.inject({ method: 'GET', url: '/pair' });
+      expect(response.body).toContain('https://feedback.example.com');
+      expect(response.body).toContain('Diese Seite gehoert zu');
     } finally {
       await harness.close();
     }
   });
 
-  it('picks the matching origin when a deployment has more than one', async () => {
-    const harness = await createHarness({
-      allowedOrigins: ['https://erste.example', 'https://zweite.example'],
-      trustProxy: true,
-    });
+  it('never names the Host header, whatever it claims to be', async () => {
+    // The page asks the visitor to decide by the address on it, so that address must not be a
+    // value the visitor sent.
+    const harness = await createHarness({ publicOrigin: 'https://feedback.example.com' });
     try {
-      const response = await harness.app.inject({
+      const plain = await harness.app.inject({ method: 'GET', url: '/pair' });
+      const spoofed = await harness.app.inject({
         method: 'GET',
         url: '/pair',
-        headers: { host: 'zweite.example', 'x-forwarded-proto': 'https' },
+        headers: { host: 'boese.example', 'x-forwarded-proto': 'https' },
       });
-      expect(response.body).toContain('https://zweite.example');
-      expect(response.body).not.toContain('https://erste.example');
+      expect(spoofed.body).not.toContain('boese.example');
+      expect(spoofed.body).toBe(plain.body);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('names no address at all when this deployment was never told its own', async () => {
+    // The case the finding is about: FEEDBACK_ALLOWED_ORIGINS names the *Control Center*, which
+    // BETRIEB.md 3.1 allows to be a different host than the API. Printing it would put a foreign
+    // domain under the sentence "reject the link if this does not match your server".
+    const harness = await createHarness({ allowedOrigins: ['https://control.example.com'] });
+    try {
+      const response = await harness.app.inject({ method: 'GET', url: '/pair' });
+      expect(response.statusCode).toBe(200);
+      expect(response.body).not.toContain('control.example.com');
+      expect(response.body).not.toContain('Diese Seite gehoert zu');
+      // A blank is only honest if it says so; the page names the variable that fills it.
+      expect(response.body).toContain('nennt bewusst keine Adresse');
+      expect(response.body).toContain('FEEDBACK_PUBLIC_ORIGIN');
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('never offers an address the app itself would refuse', async () => {
+    // Exactly the shipped .env.example: a control center on http://localhost:5173 and the
+    // control center served from this origin. The page used to print that as "this server",
+    // although the app rejects cleartext and a single-label host outright.
+    const harness = await createHarness({
+      allowedOrigins: ['http://localhost:5173'],
+      staticDir: buildSite(),
+    });
+    try {
+      const response = await harness.app.inject({ method: 'GET', url: '/pair' });
+      expect(response.body).not.toContain('localhost');
+      expect(response.body).not.toContain('http://');
+      expect(response.body).toContain('nennt bewusst keine Adresse');
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('refuses an unusable public origin at start instead of printing it', async () => {
+    // Belt and braces with the config test: whatever gets past loadConfig must still not be
+    // printable, and whatever is printable must have come through the same check.
+    for (const value of ['http://feedback.example.com', 'https://localhost:8443']) {
+      expect(anchorOrigin(value), value).toBeUndefined();
+    }
+  });
+
+  it('names the origin it serves the control center from, because that one is known', async () => {
+    // With FEEDBACK_STATIC_DIR the browser loads the Control Center from this very origin, so
+    // this origin has to be among the allowed ones - the Control Center's own login checks it.
+    const harness = await createHarness({
+      allowedOrigins: ['https://feedback.example.com'],
+      staticDir: buildSite(),
+    });
+    try {
+      const response = await harness.app.inject({ method: 'GET', url: '/pair' });
+      expect(response.body).toContain('https://feedback.example.com');
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('names none of several origins rather than guessing which one is this server', async () => {
+    const harness = await createHarness({
+      allowedOrigins: ['https://erste.example.com', 'https://zweite.example.com'],
+      staticDir: buildSite(),
+    });
+    try {
+      const response = await harness.app.inject({ method: 'GET', url: '/pair' });
+      expect(response.body).not.toContain('erste.example.com');
+      expect(response.body).not.toContain('zweite.example.com');
+      expect(response.body).toContain('nennt bewusst keine Adresse');
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('prints the address in the written form the app compares against', async () => {
+    // 443 spelled out and 443 left out are the same origin (RFC 6454), and the app drops it in
+    // ServerEndpoint.parse. An address printed with it would never match character for character.
+    const harness = await createHarness({ publicOrigin: 'https://feedback.example.com:443' });
+    try {
+      const response = await harness.app.inject({ method: 'GET', url: '/pair' });
+      expect(response.body).toContain('https://feedback.example.com<');
+      expect(response.body).not.toContain(':443');
     } finally {
       await harness.close();
     }

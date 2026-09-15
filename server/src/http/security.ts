@@ -28,14 +28,20 @@ export const API_CSP = "default-src 'none'; frame-ancestors 'none'";
  * test sees a 200 with the right content type and cannot see a policy violation at all.
  *
  * Everything stays `'self'`: no inline script, no inline style, no foreign origin. `connect-src`
- * covers the API calls and the `screen.view` event stream, `data:` under `img-src` covers a QR
- * code drawn into the page. `base-uri` and `form-action` are closed because this page has neither.
+ * covers the API calls and the `screen.view` event stream. `base-uri` and `form-action` are
+ * closed because this page has neither.
+ *
+ * `img-src 'self'` and nothing else. `data:` used to be listed here "for the QR code", which was
+ * the one thing it demonstrably did not cover: the code is built as inline `<svg>` precisely so
+ * that it is DOM rather than an image source (control-web/src/qr.ts, control-web/README.md). The
+ * bundle loads no image at all - no `<img>`, no `url(...)` in the stylesheet - so the allowance
+ * bought nothing and left `data:` open as an image source for anything that ever gets injected.
  */
 export const DOCUMENT_CSP = [
   "default-src 'none'",
   "script-src 'self'",
   "style-src 'self'",
-  "img-src 'self' data:",
+  "img-src 'self'",
   "connect-src 'self'",
   "font-src 'self'",
   "base-uri 'none'",

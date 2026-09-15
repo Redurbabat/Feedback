@@ -6,7 +6,7 @@ import cookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
 import Fastify from 'fastify';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 
 import { MAX_FRAME_BYTES, MAX_JSON_BODY_BYTES } from '../constants.js';
 import type { AppContext } from '../context.js';
@@ -24,6 +24,37 @@ import { routeRateLimitName } from './requestContext.js';
 import { applyCorsHeaders, applySecurityHeaders, isAllowedOrigin } from './security.js';
 
 const API_PREFIX = '/api/v1';
+
+/**
+ * Whether this request is an API request.
+ *
+ * Decided from the route the router actually matched, never from the raw URL. The router decodes
+ * percent escapes before matching and `String.startsWith` does not, so `/%61pi/v1/pairing/start`
+ * reached exactly the same handler as `/api/v1/pairing/start` while every raw-prefix check read it
+ * as "not the API". Measured against the running server: forty of the encoded requests, not one
+ * of them rate limited, while ten canonical ones were enough to get a 429. One character disabled
+ * the per-IP limit of protocol section 11 on every endpoint, and handed API answers the document
+ * CSP on the way out.
+ *
+ * With no route matched there is nothing to ask, so the decoded path decides - and an undecodable
+ * one counts as API, because the strict policy and the protocol error shape are the safe side.
+ */
+function isApiRequest(request: FastifyRequest): boolean {
+  const routeUrl = request.routeOptions?.url;
+  // A wildcard match answers nothing. With FEEDBACK_STATIC_DIR set, @fastify/static owns `/*`,
+  // and that route is what an unknown path under `/api/v1` matches - so reading `/*` as "not the
+  // API" handed every such path the document CSP and, worse, let it past the per-IP limit
+  // entirely, because the rate limit hook skips what is neither API nor a public setup route.
+  if (routeUrl !== undefined && !routeUrl.includes('*')) {
+    return routeUrl.startsWith(API_PREFIX);
+  }
+  const path = request.url.split('?')[0] ?? '';
+  try {
+    return decodeURIComponent(path).startsWith(API_PREFIX);
+  } catch {
+    return true;
+  }
+}
 
 /**
  * Optionally serves the built control center from the same origin as the API.
@@ -112,7 +143,7 @@ export async function buildApp(context: AppContext): Promise<FastifyInstance> {
     // Only a response that a browser renders as a document gets the wider policy, and only when
     // this server delivers the Control Center itself. An API only deployment keeps
     // `default-src 'none'` on every path it answers.
-    const servesDocument = config.staticDir !== undefined && !request.url.startsWith(API_PREFIX);
+    const servesDocument = config.staticDir !== undefined && !isApiRequest(request);
     applySecurityHeaders(reply, config.isProduction, servesDocument);
     applyCorsHeaders(request, reply, config.allowedOrigins);
   });
@@ -120,7 +151,7 @@ export async function buildApp(context: AppContext): Promise<FastifyInstance> {
   // CORS preflight for the Control Center. Only configured origins are served;
   // anything else gets a plain 403 without CORS headers.
   app.addHook('onRequest', async (request, reply) => {
-    if (request.method !== 'OPTIONS' || !request.url.startsWith(API_PREFIX)) {
+    if (request.method !== 'OPTIONS' || !isApiRequest(request)) {
       return;
     }
     const origin = request.headers.origin;
@@ -139,7 +170,7 @@ export async function buildApp(context: AppContext): Promise<FastifyInstance> {
   // are advertised in public and need the same ceiling, but they get their own key scope so a
   // flood against the setup page cannot spend the API budget of an IP the owner shares with it.
   app.addHook('onRequest', async (request) => {
-    const isApi = request.url.startsWith(API_PREFIX);
+    const isApi = isApiRequest(request);
     if (!isApi && request.routeOptions.config.publicSetup !== true) {
       return;
     }
@@ -176,7 +207,7 @@ export async function buildApp(context: AppContext): Promise<FastifyInstance> {
     if (
       config.staticDir !== undefined &&
       request.method === 'GET' &&
-      !request.url.startsWith(API_PREFIX)
+      !isApiRequest(request)
     ) {
       return reply.sendFile('index.html');
     }

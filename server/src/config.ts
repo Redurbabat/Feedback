@@ -35,6 +35,85 @@ const originSchema = z
     }
   }, 'muss eine Origin der Form https://host[:port] sein');
 
+/** Longest host name DNS carries in its textual form, and the longest single label in it. */
+const MAX_HOST_LENGTH = 253;
+const MAX_LABEL_LENGTH = 63;
+
+/**
+ * A name that can be registered and can hold a certificate - the same rule the app applies in
+ * `ServerEndpoint.isRegistrableName`.
+ *
+ * An IPv4 literal falls out of the all-digit last label rather than needing a rule of its own; an
+ * IPv6 literal arrives in brackets and fails the label check. `URL` has already lower cased the
+ * hostname and punycoded an internationalised one, so `xn--` stays visible as `xn--`.
+ */
+function isRegistrableHost(hostname: string): boolean {
+  if (hostname.length > MAX_HOST_LENGTH || hostname.endsWith('.') || hostname.startsWith('[')) {
+    return false;
+  }
+  const labels = hostname.split('.');
+  if (labels.length < 2 || /^\d+$/u.test(labels[labels.length - 1] ?? '')) {
+    return false;
+  }
+  return labels.every(
+    (label) =>
+      label.length > 0 &&
+      label.length <= MAX_LABEL_LENGTH &&
+      /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/u.test(label),
+  );
+}
+
+/**
+ * An origin this server may print as its own address, in the written form the app compares
+ * against - or `undefined` when it is not such an address.
+ *
+ * Deliberately stricter than {@link originSchema}, because the two answer different questions.
+ * An allowed origin is a browser origin of the Control Center, and during development that is
+ * legitimately `http://localhost:5173`. An address on the setup page is something a visitor is
+ * asked to hold against what their app knows, so it has to survive the check the app itself runs
+ * (`ServerEndpoint.parse`): https, a registrable host name, no path, no credentials. An address
+ * that fails there can never match any link, and printing it would send the visitor looking for
+ * a mismatch that is ours rather than theirs.
+ *
+ * `URL.origin` is the normalisation, and it is the same one both ends already use: lower case,
+ * and without a port 443 that was spelled out - RFC 6454 drops it, so the app does too.
+ */
+export function anchorOrigin(value: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return undefined;
+  }
+  if (
+    url.protocol !== 'https:' ||
+    url.pathname !== '/' ||
+    url.search !== '' ||
+    url.hash !== '' ||
+    url.username !== '' ||
+    url.password !== '' ||
+    !isRegistrableHost(url.hostname)
+  ) {
+    return undefined;
+  }
+  return url.origin;
+}
+
+const publicOriginSchema = z.string().transform((value, ctx) => {
+  const origin = anchorOrigin(value);
+  if (origin === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'muss eine https-Origin mit registrierbarem Hostnamen sein, z. B. ' +
+        'https://feedback.example.com - ohne Pfad, ohne Zugangsdaten. Genau das verlangt die App ' +
+        'von einer Serveradresse; was sie ablehnt, darf die Einrichtungsseite nicht anbieten.',
+    });
+    return z.NEVER;
+  }
+  return origin;
+});
+
 /**
  * SHA-256 fingerprint of the Android signing certificate, in exactly the notation Google's
  * Digital Asset Links verifier expects: 32 uppercase hex pairs joined by colons.
@@ -83,6 +162,15 @@ const envSchema = z.object({
         .filter((entry) => entry.length > 0),
     )
     .pipe(z.array(originSchema).min(1, 'FEEDBACK_ALLOWED_ORIGINS enthaelt keine gueltige Origin')),
+  /**
+   * Optional: the public address of *this* server, for the setup page at `/pair`.
+   *
+   * Not derivable from anything else here. `FEEDBACK_ALLOWED_ORIGINS` names the Control Center,
+   * which BETRIEB.md 3.1 explicitly allows to live on a different host than the API - so it
+   * answers a different question and must not stand in for this one. Unset, the page names no
+   * address at all rather than a guessed one; see `advertisedOrigin` in http/routes/setup.ts.
+   */
+  FEEDBACK_PUBLIC_ORIGIN: publicOriginSchema.optional(),
   FEEDBACK_SESSION_TTL_MS: z.coerce
     .number()
     .int()
@@ -133,6 +221,13 @@ export interface AppConfig {
   readonly databaseFile: string;
   readonly cookieSecret: string;
   readonly allowedOrigins: readonly string[];
+  /**
+   * This server's own public address, normalised, or undefined when it was not configured.
+   *
+   * Only ever a statement the operator made on purpose. Nothing infers it from a request, and
+   * nothing infers it from the Control Center origins.
+   */
+  readonly publicOrigin: string | undefined;
   readonly sessionTtlMs: number;
   readonly fileMaxDownloadBytes: number;
   /** Built control center to serve from the API origin, or undefined for API only. */
@@ -237,6 +332,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     databaseFile: value.FEEDBACK_DATABASE_FILE,
     cookieSecret: value.FEEDBACK_COOKIE_SECRET,
     allowedOrigins: value.FEEDBACK_ALLOWED_ORIGINS,
+    publicOrigin: value.FEEDBACK_PUBLIC_ORIGIN,
     sessionTtlMs: value.FEEDBACK_SESSION_TTL_MS,
     fileMaxDownloadBytes: value.FEEDBACK_FILE_MAX_DOWNLOAD_BYTES,
     staticDir: value.FEEDBACK_STATIC_DIR,

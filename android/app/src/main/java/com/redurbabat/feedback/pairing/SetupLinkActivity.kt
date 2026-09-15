@@ -6,8 +6,8 @@ import android.os.Bundle
 import com.redurbabat.feedback.MainActivity
 
 /**
- * The entry point a tapped setup link lands on. It has no UI: it validates, forwards the result to
- * [MainActivity] and finishes.
+ * The entry point a tapped setup link lands on. It has no UI: it validates, leaves the result where
+ * [MainActivity] picks it up and finishes.
  *
  * It exists as its own activity so that [MainActivity] does not have to change its launch mode. A
  * link that arrives while the management UI is already running must reach the instance that is
@@ -18,31 +18,30 @@ import com.redurbabat.feedback.MainActivity
  * MainActivity at the top of the task. A separate trampoline with CLEAR_TOP avoids the question.
  *
  * Exported, because a link from the browser is by definition an outside caller. That is also why
- * the raw intent is never passed on: what MainActivity receives is a string this activity parsed
- * and rebuilt, and what the controller does with it is decided by the origin rule there, not here.
+ * neither the raw intent nor the link itself is passed on: what MainActivity gets is an origin this
+ * activity parsed and rebuilt, and what the controller does with it is decided by the origin rule
+ * there, not here. It travels through [SetupLinkHandoff] rather than as an intent extra, because
+ * MainActivity is exported too and must not accept that origin from anybody else.
  */
 class SetupLinkActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Anything that is not a VIEW intent did not come through the link filter. It gets the
-        // same treatment as an unparsable link: the app opens, and nothing is offered.
+        // Anything that is not a VIEW intent carrying a URI did not come through the link filter
+        // and is not a link at all, so nothing is handed over: the app opens and says nothing.
+        // A link that is present but unreadable is the opposite case - it is an arrival, and it is
+        // announced as a refusal rather than dropped.
         val link = intent?.takeIf { it.action == Intent.ACTION_VIEW }?.dataString
-        val offeredServer = link?.let(SetupLink::parseServerOrNull)?.baseUrl
+        if (link != null) {
+            SetupLinkHandoff.offer(
+                SetupLinkArrival(offeredOrigin = SetupLink.parseServerOrNull(link)?.baseUrl),
+            )
+        }
 
         val forward = Intent(this, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            .putExtra(EXTRA_OFFERED_SERVER, offeredServer)
         startActivity(forward)
         finish()
-    }
-
-    companion object {
-        /**
-         * A normalised `https://host[:port]` origin, or null when the link was not one. Never the
-         * link itself.
-         */
-        const val EXTRA_OFFERED_SERVER = "com.redurbabat.feedback.extra.OFFERED_SERVER"
     }
 }

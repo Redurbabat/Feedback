@@ -306,8 +306,11 @@ hintereinander ist das der Unterschied zwischen "Update" und "jedes Mal neu kopp
 ### 3.4 Der eigentliche Test
 
 1. Control Center im Browser oeffnen, anmelden.
-2. App auf dem Handy oeffnen, App-Sperre einrichten, Server-URL eintragen, "Geraet verbinden".
-3. Sechsstelligen Code im Control Center eingeben (oder den QR-Code-Link verwenden).
+2. App auf dem Handy oeffnen, App-Sperre einrichten, in der Karte "Mit Control Center koppeln"
+   die Server-Adresse eintragen und "Kopplung starten" antippen.
+3. Sechsstelligen Code im Control Center in der Karte **Koppeln** eingeben und **Gerät prüfen**
+   anklicken. Der QR-Code auf dem Handy hilft hier nicht: er traegt `feedback://...`, das kein
+   Browser oeffnet, und das Control Center hat kein Feld fuer ein Ticket (`PAIRING.md`).
 4. Kopplung bestaetigen. Das Geraet sollte in Sekunden als online erscheinen.
 5. Auf dem Handy "Systeminformationen" freigeben, im Control Center dieselbe Capability
    freigeben, dann dort abfragen. Nur wenn **beide** Seiten freigegeben haben, kommt eine Antwort.
@@ -354,11 +357,17 @@ Domain geht es ohne: der Besitzer oeffnet auf dem Geraet `https://<deine-domain>
 faengt den Link ab und traegt die Adresse ein. **Die Kopplung startet danach weiterhin der
 Besitzer** - der Link fuellt ein Feld aus, mehr nicht.
 
-Was der Link *nicht* kann, gehoert zum Verstaendnis dazu: er bringt der App keinen Server bei. Die
-App uebernimmt eine Adresse aus einem Link nur, wenn sie zeichengleich ist mit der beim Build
+Was der Link *nicht* kann, gehoert zum Verstaendnis dazu: er bringt der App keinen Server bei. Sie
+akzeptiert eine Adresse aus einem Link nur, wenn sie zeichengleich ist mit der beim Build
 eingebauten oder mit der, mit der sie bereits gekoppelt ist. Jede andere Adresse wird abgelehnt und
 die Ablehnung angezeigt (Threat Model 4.20). Ein Link an ein Geraet, dessen App Ihren Server nicht
 ohnehin kennt, richtet deshalb nichts aus.
+
+**Und ein gekoppeltes Geraet aendert seine Adresse ueberhaupt nicht per Link.** Eingetragen wird
+eine Adresse nur, solange das Geraet noch nicht gekoppelt ist; auf einem gekoppelten meldet die App
+lediglich, dass der Link den bereits gekoppelten Server bestaetigt, und aendert nichts. Eine neue
+Serveradresse bedeutet immer: lokale Kopplung entfernen bzw. im Control Center widerrufen und neu
+koppeln.
 
 **Zwei Einstellungen, die zusammengehoeren.**
 
@@ -367,6 +376,14 @@ ohnehin kennt, richtet deshalb nichts aus.
 | GitHub → Settings → Secrets and variables → Actions → **Variables** | `FEEDBACK_SERVER_URL` | `https://<deine-domain>` - genau die Origin, kein Pfad, kein abschliessender Schraegstrich |
 | Server-`.env` | `FEEDBACK_ANDROID_CERT_SHA256` | die `SHA256:`-Zeile aus `keytool -list -v -keystore <datei> -alias <alias>`: 32 Hex-Paare in Grossbuchstaben, durch Doppelpunkte getrennt |
 | Server-`.env`, nur bei abweichender Anwendungs-ID | `FEEDBACK_ANDROID_PACKAGE` | Standard ist `com.redurbabat.feedback` |
+| Server-`.env`, wenn API und Control Center auf verschiedenen Hosts liegen | `FEEDBACK_PUBLIC_ORIGIN` | `https://<deine-domain>` - die oeffentliche Adresse **dieses** Servers |
+
+`FEEDBACK_PUBLIC_ORIGIN` braucht nur, wer API und Control Center auf getrennten Hosts betreibt.
+Bei der in 3.1 empfohlenen Ein-Origin-Installation leitet der Server die Adresse selbst ab. Fehlt
+die Variable in einem getrennten Aufbau, nennt `/pair` bewusst **gar keine** Adresse und sagt das
+auch: die Seite bittet den Besucher, sich auf den Namen zu verlassen, und darf ihn deshalb nicht
+raten. Nur `https` und ein echter Hostname sind erlaubt - dieselbe Regel, die die App auf jede
+Serveradresse anwendet -, sonst startet der Server nicht.
 
 `FEEDBACK_SERVER_URL` ist bewusst eine **Variable und kein Secret**: der Hostname steht im Manifest
 jeder veroeffentlichten APK und in der `assetlinks.json` des Servers, er ist also ohnehin
@@ -374,6 +391,23 @@ oeffentlich. Er gehoert trotzdem nicht ins Repository, weil er zur Installation 
 gehoert und nicht zum Quelltext. Ist die Variable nicht gesetzt, baut die App ohne festen Anker:
 die Adresse wird eingetippt wie bisher, und **jeder** Einrichtungslink wird abgelehnt - es gibt
 dann nichts, womit er uebereinstimmen koennte.
+
+**Bis die Adresse wirkt, fehlen zwei Schritte.** Der Anker steckt in der APK, nicht auf dem Server:
+der Wert wird beim Build in `BuildConfig.DEFAULT_SERVER_URL` geschrieben. Eine neu gesetzte oder
+geaenderte Variable aendert an einer bereits installierten App also nichts.
+
+1. **Den Release-Workflow ausloesen.** Eine geaenderte Actions-Variable startet von sich aus keinen
+   Lauf. `.github/workflows/android-release.yml` laeuft nur bei einem Push auf `main`, der etwas
+   unter `android/**` oder an der Workflow-Datei selbst aendert - und bei einem manuellen Start:
+   GitHub → Actions → **Android Release APK** → *Run workflow*. Wer nur die Variable gesetzt hat,
+   braucht den manuellen Start. Der Releasetext des Laufs nennt die verwendete Adresse; steht dort
+   "ohne feste Serveradresse", hat der Build die Variable nicht gesehen.
+2. **Die neue APK auf jedem Geraet installieren.** Erst die Installation bringt den Anker auf das
+   Geraet. Bis dahin traegt die dort installierte App den alten Anker - oder gar keinen - und lehnt
+   den Einrichtungslink weiter ab, voellig unabhaengig davon, was der Server ausliefert. Mit
+   hinterlegtem Signaturschluessel laesst sich die neue Version ueber die installierte setzen; ohne
+   ihn verlangt Android eine Deinstallation, und die kostet Geraeteidentitaet und Kopplung (3.3 und
+   `ANDROID_RELEASE.md`).
 
 Die beiden Werte ergeben nur zusammen etwas. Die APK beansprucht den Host aus
 `FEEDBACK_SERVER_URL`, der Server bestaetigt unter `/.well-known/assetlinks.json` den

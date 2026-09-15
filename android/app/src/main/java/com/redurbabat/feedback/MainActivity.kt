@@ -6,7 +6,7 @@ import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.fragment.app.FragmentActivity
-import com.redurbabat.feedback.pairing.SetupLinkActivity
+import com.redurbabat.feedback.pairing.SetupLinkHandoff
 import com.redurbabat.feedback.ui.AndroidBiometricGateway
 import com.redurbabat.feedback.ui.FeedbackApp
 import com.redurbabat.feedback.ui.FeedbackController
@@ -41,7 +41,7 @@ class MainActivity : FragmentActivity() {
         controller = FeedbackController(applicationContext)
         val biometricGateway = AndroidBiometricGateway(this)
         controller.setBiometricUnlockAvailable(biometricGateway.isAvailable())
-        consumeSetupLink(intent)
+        consumeSetupLink()
 
         setContent {
             FeedbackApp(controller = controller, biometricGateway = biometricGateway)
@@ -50,27 +50,38 @@ class MainActivity : FragmentActivity() {
 
     /**
      * How a setup link reaches the running controller: SetupLinkActivity starts this activity with
-     * CLEAR_TOP and SINGLE_TOP, so an existing instance is reused and gets the intent here instead
-     * of a second instance - and a second instance would mean a second FeedbackController whose
-     * agent stops this one's.
+     * CLEAR_TOP and SINGLE_TOP, so an existing instance is reused and is woken here instead of a
+     * second instance being built - and a second instance would mean a second FeedbackController
+     * whose agent stops this one's.
      */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        consumeSetupLink(intent)
+        consumeSetupLink()
     }
 
     /**
-     * Read once and removed, so that a recreation for a rotation or a theme change does not offer
-     * the same link a second time.
+     * The link is fetched from [SetupLinkHandoff], never from the intent.
+     *
+     * This activity is the LAUNCHER entry and therefore exported: any installed app can start it,
+     * with any extras it likes. An extra read here would let such a caller claim that a setup link
+     * offered an address when none was tapped - and the sentence the controller then writes sits in
+     * exactly the panel whose job it is to tell the owner where the server address came from. The
+     * origin rule would still refuse every foreign server, so nothing would be paired wrongly; what
+     * would be wrong is the story on screen. [SetupLinkHandoff] cannot be written from outside this
+     * process, so there is no caller to trust and none to check.
+     *
+     * Reading clears the handoff, so a recreation for a rotation or a theme change does not offer
+     * the same link a second time. The cold-start case - the tapped link is what launched the app -
+     * is covered by the call in `onCreate`: SetupLinkActivity runs in this process and finishes its
+     * write before this activity is created.
      */
-    private fun consumeSetupLink(source: Intent?) {
-        if (source == null || !::controller.isInitialized) {
+    private fun consumeSetupLink() {
+        if (!::controller.isInitialized) {
             return
         }
-        val offeredServer = source.getStringExtra(SetupLinkActivity.EXTRA_OFFERED_SERVER) ?: return
-        source.removeExtra(SetupLinkActivity.EXTRA_OFFERED_SERVER)
-        controller.applySetupLink(offeredServer)
+        val arrival = SetupLinkHandoff.take() ?: return
+        controller.applySetupLink(arrival)
     }
 
     /**

@@ -1,22 +1,42 @@
 # Pairing
 
-Stand: 2026-09-13. Wire-Format und Endpunkte stehen in `protocol/PROTOCOL.md` Abschnitt 5 und 6;
+Stand: 2026-09-15. Wire-Format und Endpunkte stehen in `protocol/PROTOCOL.md` Abschnitt 5 und 6;
 die Begruendung des Modells in `docs/decisions/ADR-002-pairing-model.md`. Hier steht, wie es
 ablaeuft und was dabei geprueft wird.
 
 ## Bedienung
 
-1. Auf dem Handy **Gerät verbinden** antippen. Es erscheinen ein sechsstelliger Code und ein
-   QR-Code, beide fuenf Minuten gueltig, mit sichtbarem Countdown.
-2. Im Control Center **/pair** oeffnen und den Code eingeben - oder den Link aus dem QR-Code
-   verwenden.
-3. Das Control Center zeigt, **welches** Geraet fragt: Name, Plattform, Android-Version,
-   Fingerprint und Zeitpunkt.
-4. **Gerät koppeln** oder **Ablehnen**.
+1. Auf dem Handy in der Karte **Mit Control Center koppeln** die Server-Adresse eintragen - oder
+   sie von einem Einrichtungslink bestaetigen lassen (`docs/deployment/BETRIEB.md` 3.6) - und
+   **Kopplung starten** antippen. Es erscheinen ein sechsstelliger Code und ein QR-Code, beide
+   fuenf Minuten gueltig. Die App nennt dazu **Gültig bis** mit dem Ablaufzeitpunkt und eine
+   laufende Fortschrittsanzeige; einen mitlaufenden Countdown gibt es nicht.
+2. Im **angemeldeten Control Center** in der Karte **Koppeln** den sechsstelligen Code eintragen
+   und **Gerät prüfen** anklicken.
+3. Das Control Center zeigt, **welches** Geraet fragt: Name, Device-ID, Fingerprint,
+   Android-Version, App-Version und Ablaufzeitpunkt.
+4. **Bestätigen** oder **Ablehnen**.
 5. Das Handy holt danach einmalig sein Geraete-Token ab und ist gekoppelt.
 
 Kopplung erteilt **Basisvertrauen, keinen Zugriff**. Danach ist keine einzige Capability
 freigegeben; jede wird auf beiden Seiten getrennt erteilt.
+
+**Wo der Code nicht hingehoert.** Zwei Wege, die hier frueher standen, fuehren nicht ans Ziel:
+
+- **Nicht `/pair`.** Diese Adresse liefert seit Milestone 8 die oeffentliche Einrichtungsseite
+  fuer Android (`server/src/http/routes/setup.ts`). Sie ist anonym, hat **kein Eingabefeld** und
+  sagt einem Besucher nur, dass er die App installieren soll; genannt wird dort allein die Origin,
+  zu der die Seite gehoert. Der sechsstellige Code gehoert in das angemeldete Control Center.
+- **Nicht der QR-Code des Geraets.** Er traegt `feedback://pair?v=1&ticket=<ticket>`. Dieses
+  Schema oeffnet kein Browser, und das Control Center hat kein Feld fuer ein Ticket:
+  `control-web/src/api.ts` schickt bei `lookup`, `approve` und `reject` ausschliesslich den
+  `displayCode`. Das Protokoll laesst beide Nachweise zu (`protocol/PROTOCOL.md` 6.2), im Browser
+  benutzt wird heute nur der Code.
+
+Der QR-Code, den das **Control Center** unter *Neues Gerät hinzufügen* zeigt, ist ein anderer: er
+zeigt auf `https://<origin>/pair`, wird mit der Kamera-App des neuen Geraets gescannt und bringt
+dort die Serveradresse in das Feld aus Schritt 1 - er traegt kein Ticket und startet keine
+Kopplung.
 
 ## Architektur und Schutz
 
@@ -59,8 +79,11 @@ Weitere Eigenschaften:
 
 - **Der QR-Code traegt das Ticket.** Wer den Bildschirm waehrend des Pairings sieht, sieht es mit.
   Die Bestaetigung im Control Center ist die Gegenmassnahme, kein Ersatz (Threat Model 4.2).
-- **Kein QR-Scanner auf dem Geraet.** Android rendert den Code, liest aber keinen. Ein Scanner
-  braeuchte die Kamera-Berechtigung und wird erst mit dokumentiertem Bedarf gebaut.
+- **Auf keiner der beiden Seiten ein QR-Scanner.** Android rendert den Code, liest aber keinen;
+  ein Scanner braeuchte die Kamera-Berechtigung und wird erst mit dokumentiertem Bedarf gebaut.
+  Das Control Center bringt ebenfalls keinen mit. Der Ticket-QR-Code hat damit heute keinen Leser,
+  und die Kopplung laeuft ueber den sechsstelligen Code. Die Beschriftung in der App
+  ("Im Control Center scannen oder Code eingeben") verspricht an dieser Stelle mehr, als es gibt.
 - **Geht die `claim`-Antwort verloren, ist die Kopplung verbraucht** und muss neu gestartet
   werden. Der Preis fuer echte Einmalverwendung.
 - **Das Geraet prueft die Identitaet des Servers nicht ueber TLS hinaus.** Kein Pinning, kein TOFU.

@@ -95,16 +95,19 @@ Wert. Ersetzen ist der einzige Weg, und das ist Absicht.
 
 ### Laufend: Release erzeugen
 
-`.github/workflows/android-release.yml` laeuft bei jeder Android-Aenderung auf
-`main` und bei manuellem Start. Ergebnis ist ein Release mit festem Tag `apk`,
-aus dem die Datei `Feedback.apk` direkt auf dem Handy geladen werden kann.
+`.github/workflows/android-release.yml` laeuft bei einem Push auf `main`, der etwas unter
+`android/**` oder an der Workflow-Datei selbst aendert, und bei manuellem Start (Actions →
+**Android Release APK** → *Run workflow*). Eine geaenderte Repository-Variable loest **keinen**
+Lauf aus. Ergebnis ist ein Release mit festem Tag `apk`, aus dem die Datei `Feedback.apk` direkt
+auf dem Handy geladen werden kann.
 
-**Was der Release-Text nennen muss.** Der Signatur-Fingerabdruck steht heute im Build-Log, damit
-ein unbeabsichtigter Schluesselwechsel auffaellt. Aus demselben Grund gehoert die verwendete
-`FEEDBACK_SERVER_URL` in den Release-Text: wer die APK installiert, muss nachlesen koennen,
-welchem Server sie ohne Rueckfrage vertraut - von aussen ist das einer APK nicht anzusehen
-(Threat Model 4.20). Steht dort keine Adresse, ist der Build ohne Anker gebaut, und die Adresse
-wird auf dem Geraet eingetippt.
+**Was der Releasetext nennt.** Er nennt die verwendete `FEEDBACK_SERVER_URL` - in beiden
+Varianten, mit und ohne festen Signaturschluessel. Wer die APK installiert, kann damit nachlesen,
+welchem Server sie ohne Rueckfrage vertraut; von aussen ist das einer APK nicht anzusehen (Threat
+Model 4.20). Ist die Variable nicht gesetzt, sagt der Text ausdruecklich, dass dieser Build ohne
+festen Anker gebaut wurde und die Adresse auf dem Geraet eingetippt wird. Ein Nachweis ist das
+nicht: wer eine eigene APK baut, schreibt auch ihren Releasetext. Es macht den Anker **lesbar**,
+nicht pruefbar - pruefbar wird er allein ueber die Signatur.
 
 ## Architektur und Schutz
 
@@ -116,7 +119,14 @@ wird auf dem Geraet eingetippt.
   Secret, wird nicht heimlich schwaecher signiert: der Build laeuft mit der
   Standard-Debug-Signatur weiter, und der Releasetext benennt die Folge ausdruecklich.
 - Der Signatur-Fingerabdruck wird im Log ausgegeben, damit ein unbeabsichtigter
-  Schluesselwechsel auffaellt, statt erst beim fehlgeschlagenen Update des Nutzers.
+  Schluesselwechsel auffaellt, statt erst beim fehlgeschlagenen Update des Nutzers. Der Schritt
+  ruft `keytool -list -v` auf und filtert die Ausgabe mit `grep -Ei "sha-?256"`; er laeuft unter
+  `set -euo pipefail` und ohne `|| true`, faellt also aus, wenn keine Fingerabdruckzeile kommt.
+  Ein Waechter, der schweigend gruen wird, waere hier die teuerste Variante - genau das war er,
+  bis der `grep` beide Schreibweisen erfasste (`keytool` schreibt "SHA-256", gesucht wurde
+  "SHA256") und das `|| true` dahinter verschwand. Ohne hinterlegten
+  Schluessel wird der Schritt uebersprungen: dann gibt es keinen festen Fingerabdruck, und der
+  Releasetext sagt genau das.
 - Die APK enthaelt keine Geheimnisse. Die Geraeteidentitaet entsteht erst beim
   ersten Start auf dem Geraet und ist pro Installation verschieden.
 
@@ -144,7 +154,8 @@ wird auf dem Geraet eingetippt.
 ## Abnahme
 
 - Noch nicht abgenommen. Der Workflow ist erstellt, aber in diesem Repository
-  noch nicht gelaufen: er loest erst bei einem Push auf `main` aus.
+  noch nicht gelaufen: er loest bei einem Push auf `main` unter `android/**` aus und muss sonst
+  von Hand gestartet werden.
 - Die Signaturlogik ist gegen das Vorbild in `Redurbabat/instagram-monitor`
   geprueft; der dortige Passwort-Fallback aus der oeffentlichen Repository-ID
   wurde bewusst **nicht** uebernommen.

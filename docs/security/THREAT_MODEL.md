@@ -172,15 +172,24 @@ Root-Erkennung waere ein Signal, keine Grenze, und wird nicht als Sicherheitsmer
 
 **Impact** hoch. **Likelihood** niedrig.
 **Mitigation** Android laesst ein Update nur mit derselben Signatur zu. Der Signaturschluessel
-liegt ausschliesslich im GitHub Secret Store, nie im Repository, und der Fingerabdruck wird im
-Build protokolliert, damit ein unbeabsichtigter Wechsel auffaellt.
+liegt ausschliesslich im GitHub Secret Store, nie im Repository. Der Fingerabdruck wird im Lauf
+protokolliert, damit ein unbeabsichtigter Wechsel auffaellt - `keytool -list -v`, gefiltert mit
+`grep -Ei "sha-?256"`, unter `set -euo pipefail` und ohne `|| true`: findet der Schritt keine
+Fingerabdruckzeile, faellt er aus, statt still gruen zu werden. Auch diese Zusage stand hier,
+bevor der Workflow sie einloeste - der `grep` suchte "SHA256" ohne Bindestrich, `keytool` schreibt
+ihn mit, und `|| true` verschluckte das leere Ergebnis. Ein Lauf ohne hinterlegten Schluessel
+ueberspringt den Schritt: dort gibt es keinen festen Fingerabdruck, und der Releasetext sagt das.
+
 Dieser Abschnitt behandelt bisher nur den Signaturpfad, also die manipulierte APK. Seit es einen
 eingebauten Vertrauensanker gibt, hat er eine zweite Seite: eine APK, die **nicht** manipuliert,
 sondern schlicht mit einem anderen `FEEDBACK_SERVER_URL` gebaut wurde, ist von aussen von der
 echten nicht zu unterscheiden. Gleicher Name, gleiches Symbol, gleicher Quelltext - nur ihr
 eingebauter Default zeigt woanders hin, und genau dieser Default entscheidet, welchen
-Einrichtungslink sie annimmt (4.20). Unterscheidbar werden die beiden allein ueber die Signatur,
-und die unterscheidet nur dann etwas, wenn sie zwischen Builds gleich bleibt.
+Einrichtungslink sie annimmt (4.20). Der Releasetext nennt inzwischen die verwendete
+`FEEDBACK_SERVER_URL`, in beiden Varianten; das macht den Anker eines Builds **lesbar**, beweist
+ihn aber nicht - wer eine eigene APK baut, schreibt auch ihren Releasetext. Unterscheidbar werden
+die beiden allein ueber die Signatur, und die unterscheidet nur dann etwas, wenn sie zwischen
+Builds gleich bleibt.
 
 **Residual** Wer eine fremd signierte APK **neu** installiert, hat eine andere App - mit einer
 anderen Identitaet und ohne Kopplung. Solange kein fester Schluessel hinterlegt ist, wechselt die
@@ -362,12 +371,37 @@ Betreiber aus 4.6 - mit allem, was dort steht, nur ohne dass der Besitzer ihn ge
 **Likelihood** mittel, und sie steigt mit dem Komfort. Eine Adresse, die abgetippt werden muss,
 wird dabei gelesen; eine, die ein Link mitbringt, nicht.
 **Mitigation** Eine Regel traegt das hier, und sie ist bewusst die einfachste, die reicht: **ein
-Einrichtungslink fuehrt nie einen Server ein, er bestaetigt nur einen.** Eine Origin aus einem Link
-wird genau dann uebernommen, wenn sie zeichengleich ist mit dem eingebauten Default
-(`BuildConfig.DEFAULT_SERVER_URL`) oder mit der Origin der bereits gespeicherten Registrierung.
+Einrichtungslink fuehrt nie einen Server ein, er bestaetigt nur einen.** `SetupLinkPolicy.decide`
+vergleicht die Origin aus dem Link gegen bis zu zwei Anker: den eingebauten Default
+(`BuildConfig.DEFAULT_SERVER_URL`) und die Origin der bereits gespeicherten Registrierung. Ist sie
+zu keinem von beiden zeichengleich, wird sie abgelehnt.
+
 Verglichen wird immer die vollstaendige normalisierte Origin - Schema, Host **und** Port -, nie
 nur der Host: `https://feedback.example.com` und `https://feedback.example.com:8443` sind
-verschiedene Server, und `feedback.example.com.angreifer.example` ist ein dritter.
+verschiedene Server, und `feedback.example.com.angreifer.example` ist ein dritter. Normalisiert
+heisst dabei: kleingeschriebener Host, kein abschliessender Schraegstrich, und ein
+ausgeschriebener Standardport 443 faellt weg - `https://feedback.example.com:443` und
+`https://feedback.example.com` sind **dieselbe** Origin, jeder andere Port bleibt Teil des
+Vergleichs. Diese Normalisierung steht in `ServerEndpoint.parse` und noch einmal, absichtlich
+gleich, im Gradle-Skript, das den Default in den Build schreibt: ein Anker, den die App selbst
+nicht akzeptieren wuerde, soll gar nicht erst entstehen.
+
+**Was ein bestaetigter Link tatsaechlich aendert - und wann.** Uebernommen, also in das Adressfeld
+geschrieben, wird eine Origin nur in genau einem Zustand: das Geraet ist **nicht gekoppelt**,
+Einrichtungslinks sind nicht abgeschaltet, und es laeuft gerade keine Kopplung
+(`SetupLinkPresentation.outcome`). Genau in diesem Zustand gibt es den zweiten Anker nicht: die
+gespeicherte Registrierung wird an `SetupLinkPolicy` als `registeredOrigin` gereicht, und die
+existiert nur zusammen mit `paired` (`FeedbackController`: `pairedServer` wird mit der Kopplung
+gesetzt und mit Widerruf oder lokalem Entfernen geloescht). Bei einem gekoppelten Geraet endet ein
+zeichengleicher Link deshalb als Meldung - "Der Einrichtungslink bestätigt den bereits gekoppelten
+Server ..., es wurde nichts geändert" - und nie als Schreibvorgang.
+
+**Die Registrierung ist damit ein Anker der Rueckmeldung, nicht der Uebernahme.** Sie entscheidet
+allein darueber, ob der Besitzer eine Bestaetigung oder eine Ablehnung liest; ein Feld aendert sie
+nie. Zu einer Uebernahme fuehren kann ausschliesslich der eingebaute Default. Das ist die
+gewollte Eigenschaft und keine Luecke: ein gekoppeltes Geraet soll seine Serveradresse nicht per
+Link wechseln - auch nicht auf die eigene -, denn ein Adresswechsel ist ein neues Pairing und
+gehoert in die Hand des Besitzers.
 
 Warum Gleichheit und nicht Herkunft: ein Link ist eine Zeichenkette ohne jede Bindung an den
 Ueberbringer. Ein praeparierter Link in einer Nachricht, ein expliziter Intent einer fremden App

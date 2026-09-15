@@ -75,3 +75,79 @@ describe('android asset link configuration', () => {
     }
   });
 });
+
+/**
+ * The public address of this server (`FEEDBACK_PUBLIC_ORIGIN`).
+ *
+ * Its only job is to be printed on `/pair` as the address a visitor holds against what their app
+ * knows. That makes a wrong value worse than a missing one: an address the app can never accept
+ * sends the owner looking for a mismatch that is ours. So the rule here is the app's own rule
+ * (`ServerEndpoint.parse`), and a value that fails it stops the start instead of reaching a page.
+ */
+describe('public origin configuration', () => {
+  it('stays unset when nothing is configured', () => {
+    expect(loadConfig(baseEnv()).publicOrigin).toBeUndefined();
+  });
+
+  it('accepts an https origin and keeps it as written', () => {
+    const config = loadConfig(baseEnv({ FEEDBACK_PUBLIC_ORIGIN: 'https://feedback.example.com' }));
+    expect(config.publicOrigin).toBe('https://feedback.example.com');
+  });
+
+  it('keeps a non-default port, because a different port is a different server', () => {
+    const config = loadConfig(
+      baseEnv({ FEEDBACK_PUBLIC_ORIGIN: 'https://feedback.example.com:8443' }),
+    );
+    expect(config.publicOrigin).toBe('https://feedback.example.com:8443');
+  });
+
+  it('drops a port 443 that was spelled out, exactly as both ends do', () => {
+    // RFC 6454 leaves it out, the browser leaves it out, ServerEndpoint.parse leaves it out. An
+    // anchor that kept it would refuse every real link to itself.
+    const config = loadConfig(
+      baseEnv({ FEEDBACK_PUBLIC_ORIGIN: 'https://feedback.example.com:443' }),
+    );
+    expect(config.publicOrigin).toBe('https://feedback.example.com');
+  });
+
+  it('refuses every address the app itself would refuse', () => {
+    const wrong: Record<string, string> = {
+      cleartext: 'http://feedback.example.com',
+      'single label host': 'https://localhost',
+      'single label host with port': 'https://feedback:8443',
+      'ipv4 literal': 'https://192.0.2.10',
+      'ipv6 literal': 'https://[2001:db8::1]',
+      'trailing dot': 'https://feedback.example.com.',
+      'with a path': 'https://feedback.example.com/pair',
+      'with a query': 'https://feedback.example.com/?a=1',
+      'with a fragment': 'https://feedback.example.com/#x',
+      'with credentials': 'https://user:pass@feedback.example.com',
+      'not a url at all': 'feedback.example.com',
+      'empty': ' ',
+    };
+    for (const [label, value] of Object.entries(wrong)) {
+      expect(() => loadConfig(baseEnv({ FEEDBACK_PUBLIC_ORIGIN: value })), label).toThrow(
+        ConfigError,
+      );
+    }
+  });
+
+  it('names the variable in the error so the typo is findable', () => {
+    expect(() => loadConfig(baseEnv({ FEEDBACK_PUBLIC_ORIGIN: 'http://localhost:5173' }))).toThrow(
+      /FEEDBACK_PUBLIC_ORIGIN/,
+    );
+  });
+
+  it('is independent of the control center origins', () => {
+    // The whole point of the variable: the API host may be a different host than the Control
+    // Center, so the one must not have to appear in the other.
+    const config = loadConfig(
+      baseEnv({
+        FEEDBACK_ALLOWED_ORIGINS: 'https://control.example.com',
+        FEEDBACK_PUBLIC_ORIGIN: 'https://api.example.com',
+      }),
+    );
+    expect(config.publicOrigin).toBe('https://api.example.com');
+    expect(config.allowedOrigins).toEqual(['https://control.example.com']);
+  });
+});

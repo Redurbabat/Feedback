@@ -22,8 +22,7 @@ import com.redurbabat.feedback.pairing.ServerPairingClient
 import com.redurbabat.feedback.pairing.ServerPairingException
 import com.redurbabat.feedback.pairing.ServerPairingSession
 import com.redurbabat.feedback.pairing.ServerPairingStatus
-import com.redurbabat.feedback.pairing.SetupLinkDecision
-import com.redurbabat.feedback.pairing.SetupLinkPolicy
+import com.redurbabat.feedback.pairing.SetupLinkArrival
 import com.redurbabat.feedback.pairing.SetupLinkStore
 import com.redurbabat.feedback.permissions.LocalCapabilityStore
 import com.redurbabat.feedback.protocol.Capability
@@ -171,9 +170,11 @@ class FeedbackController(
 
     /**
      * A setup link that arrived while the UI was still locked. Held rather than applied, because
-     * a locked app must not change anything, and dropped only once it has been decided on.
+     * a locked app must not change anything, and dropped only once it has been decided on. Null
+     * means no link is waiting - an arrival whose link could not be read is not null, it is an
+     * arrival that will be refused out loud.
      */
-    private var pendingSetupLink: String? = null
+    private var pendingSetupLink: SetupLinkArrival? = null
 
     init {
         initialize()
@@ -664,8 +665,10 @@ class FeedbackController(
     // ------------------------------------------------------------- setup links
 
     /**
-     * Takes the origin a setup link offered, as parsed and rebuilt by
-     * [com.redurbabat.feedback.pairing.SetupLinkActivity]. Null means the link was not one.
+     * Takes one arrived setup link, as read and rebuilt by
+     * [com.redurbabat.feedback.pairing.SetupLinkActivity]. Every call is a link that reached the
+     * app; whether it could be read is carried inside [SetupLinkArrival], not by the absence of a
+     * call, so an unreadable one still gets an answer on screen.
      *
      * Applying is deliberately not done here. [setServerUrl] returns immediately while the app is
      * locked, and a locked app is exactly the state a tapped link arrives in - the owner taps the
@@ -673,11 +676,11 @@ class FeedbackController(
      * the feature work only for owners without a local lock. So it is held and decided later, in
      * the one place that decides.
      */
-    fun applySetupLink(value: String?) {
+    fun applySetupLink(arrival: SetupLinkArrival) {
         if (closed.get()) {
             return
         }
-        pendingSetupLink = value?.takeIf { it.isNotBlank() } ?: return
+        pendingSetupLink = arrival
         flushPendingSetupLink()
     }
 
@@ -686,76 +689,40 @@ class FeedbackController(
      * and again from every path that unlocks the UI, so a link that waited behind the lock is not
      * lost and is never applied twice.
      *
-     * Whether the origin may be used is [SetupLinkPolicy]'s answer, not this method's - that is a
-     * trust decision and does not belong in the UI layer. What is decided here is only what the
-     * owner is shown and which field is filled in. The link never starts a pairing.
+     * What the arrival means is [SetupLinkPresentation]'s answer, and the origin rule behind it is
+     * the pairing module's - neither belongs in a controller method. What is left here is writing
+     * the outcome into the state, and there is no branch that writes nothing.
      */
     private fun flushPendingSetupLink() {
         if (closed.get() || !_state.value.appUnlocked) {
             return
         }
-        val candidate = pendingSetupLink ?: return
+        val arrival = pendingSetupLink ?: return
         pendingSetupLink = null
 
-        if (_state.value.setupLinksIgnored) {
-            publishSetupLinkOutcome(
-                message = "Ein Einrichtungslink wurde ignoriert, weil du Einrichtungslinks " +
-                    "abgeschaltet hast.",
-                rejected = true,
-            )
-            return
-        }
-
-        val decision = SetupLinkPolicy.decide(
-            offeredOrigin = candidate,
+        val current = _state.value
+        val outcome = SetupLinkPresentation.outcome(
+            arrival = arrival,
             buildDefaultOrigin = BuildConfig.DEFAULT_SERVER_URL,
-            registeredOrigin = _state.value.pairedServer,
+            registeredOrigin = current.pairedServer,
+            linksIgnored = current.setupLinksIgnored,
+            paired = current.paired,
+            pairingInProgress = current.pairing !is PairingUiPhase.Idle &&
+                current.pairing !is PairingUiPhase.Failed,
         )
-        when (decision) {
-            SetupLinkDecision.Unusable -> publishSetupLinkOutcome(
-                message = "Einrichtungslink abgelehnt: er nennt keine verwendbare Serveradresse.",
-                rejected = true,
+        when (outcome) {
+            is SetupLinkOutcome.Announced -> publishSetupLinkOutcome(
+                message = outcome.message,
+                rejected = outcome.rejected,
             )
 
-            is SetupLinkDecision.Refused -> publishSetupLinkOutcome(
-                message = rejectionMessage(decision),
-                rejected = true,
+            is SetupLinkOutcome.FillsAddressField -> _state.value = current.copy(
+                serverUrl = outcome.server.baseUrl,
+                pairing = PairingUiPhase.Idle,
+                setupLinkNotice = outcome.notice,
+                setupLinkRejected = false,
             )
-
-            is SetupLinkDecision.Confirmed -> acceptSetupLink(decision.server)
         }
-    }
-
-    /** The confirmed origin fills in the address field. It never starts anything. */
-    private fun acceptSetupLink(server: ServerEndpoint) {
-        if (_state.value.paired) {
-            publishSetupLinkOutcome(
-                message = "Der Einrichtungslink bestätigt den bereits gekoppelten Server " +
-                    "${displayAuthority(server)}. Es wurde nichts geändert.",
-                rejected = false,
-            )
-            return
-        }
-        // A pairing that is already running owns the address it started with; overwriting the
-        // field underneath it would describe a session that is not the one on screen.
-        if (_state.value.pairing !is PairingUiPhase.Idle &&
-            _state.value.pairing !is PairingUiPhase.Failed
-        ) {
-            publishSetupLinkOutcome(
-                message = "Der Einrichtungslink wurde nicht übernommen, weil gerade eine " +
-                    "Kopplung läuft.",
-                rejected = true,
-            )
-            return
-        }
-
-        _state.value = _state.value.copy(
-            serverUrl = server.baseUrl,
-            pairing = PairingUiPhase.Idle,
-            setupLinkNotice = "Serveradresse aus dem Einrichtungslink übernommen: " +
-                "${displayAuthority(server)}. Die Kopplung startest du selbst.",
-            setupLinkRejected = false,
-        )
     }
 
     /**
@@ -787,19 +754,6 @@ class FeedbackController(
             }
     }
 
-    /** Names both sides. A refusal the owner cannot read is a silent one. */
-    private fun rejectionMessage(refusal: SetupLinkDecision.Refused): String =
-        if (refusal.trusted.isEmpty()) {
-            "Einrichtungslink abgelehnt: er zeigt auf ${displayAuthority(refusal.offered)}. " +
-                "Diese App wurde ohne feste Serveradresse gebaut und ist nicht gekoppelt - es " +
-                "gibt nichts, womit der Link übereinstimmen könnte."
-        } else {
-            "Einrichtungslink abgelehnt: er zeigt auf ${displayAuthority(refusal.offered)}, " +
-                "diese App vertraut " +
-                "${refusal.trusted.joinToString(" bzw. ", transform = ::displayAuthority)}. " +
-                "Die Serveradresse wurde nicht verändert."
-        }
-
     /**
      * The outcome goes where the owner can actually see it. The pairing card, and with it the
      * setup-link line, is only on screen while the device is unpaired.
@@ -810,27 +764,6 @@ class FeedbackController(
         } else {
             _state.value.copy(setupLinkNotice = message, setupLinkRejected = rejected)
         }
-    }
-
-    /**
-     * A host is shown only when every character of it is one a host name may contain. Bidi
-     * overrides (U+202A..U+202E, U+2066..U+2069) are the reason this is not simply trusted:
-     * they would let a refused address render as the trusted one, in a message whose whole point
-     * is the difference between the two. ServerEndpoint does not let them through in the first
-     * place - and the place that shows a name to a human still does not rely on that.
-     */
-    private fun displayAuthority(endpoint: ServerEndpoint): String {
-        val authority = endpoint.authority
-        return if (authority.isNotEmpty() && authority.all(::isDisplayableHostCharacter)) {
-            authority
-        } else {
-            UNRENDERABLE_AUTHORITY
-        }
-    }
-
-    private fun isDisplayableHostCharacter(character: Char): Boolean = when (character) {
-        in 'a'..'z', in '0'..'9', '.', ':', '-' -> true
-        else -> false
     }
 
     fun setServerUrl(value: String) {
@@ -1289,7 +1222,7 @@ class FeedbackController(
             identity = identity,
             identityAvailable = identity != null,
             serverUrl = stored?.endpoint?.baseUrl ?: buildServer?.baseUrl.orEmpty(),
-            buildServerAuthority = buildServer?.let(::displayAuthority),
+            buildServerAuthority = buildServer?.let(SetupLinkPresentation::displayAuthority),
             setupLinksIgnored = runCatching { setupLinkStore.isIgnored() }.getOrDefault(false),
             paired = stored != null,
             pairedDeviceName = stored?.registration?.name,
@@ -1514,8 +1447,5 @@ class FeedbackController(
 
     private companion object {
         const val LOCKOUT_TICK_MILLIS = 500L
-
-        /** Stands in for a host that is not safe to render. Never shown next to a real one. */
-        const val UNRENDERABLE_AUTHORITY = "eine nicht darstellbare Adresse"
     }
 }

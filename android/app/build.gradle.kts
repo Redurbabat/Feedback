@@ -109,7 +109,9 @@ fun normalizedServerOrigin(raw: String): String {
             reject("\"$label\" is not a usable host label")
         }
     }
-    return "https://$host" + if (uri.port == -1) "" else ":${uri.port}"
+    // 443 is dropped, exactly as ServerEndpoint.kt drops it: the two normalisers are compared
+    // character by character, so they have to agree on what an origin looks like.
+    return "https://$host" + if (uri.port == -1 || uri.port == 443) "" else ":${uri.port}"
 }
 
 // The owner's own domain. Not a secret - it is public in the manifest and in assetlinks.json - but

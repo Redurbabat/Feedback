@@ -92,6 +92,10 @@ Gerendert wird als **inline `<svg>`**, nicht als `<img src="data:...">`: inline 
 faellt damit nicht unter `img-src`. Der Code bringt seinen eigenen hellen Untergrund mit und folgt
 nicht dem Farbschema der Seite; ein invertierter QR-Code wird von vielen Kameras nicht gelesen.
 
+Das Buendel laedt deshalb ueberhaupt kein Bild - kein `<img>`, kein `url(...)` im Stylesheet. Die
+Policy des Servers lautet entsprechend `img-src 'self'` **ohne** `data:` (`server/src/http/security.ts`).
+Wer hier je ein Bild ergaenzt, aendert damit eine Sicherheitsrichtlinie und nicht nur eine Ansicht.
+
 ## Dateien
 
 Die Geraeteseite enthaelt einen Bereich "Dateien". Er zeigt ausschliesslich die Bereiche, die der

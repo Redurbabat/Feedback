@@ -121,13 +121,31 @@ jobs:
           echo "APK ist nicht debuggable."
 
 
+      # Dieser Schritt hat lange nichts ausgegeben und war trotzdem gruen. Ohne `-v` beschriftet
+      # keytool die Zeile "Certificate fingerprint (SHA-256)" - mit Bindestrich -, der grep suchte
+      # "SHA256" ohne, und `|| true` verschluckte das leere Ergebnis. THREAT_MODEL 4.10 und
+      # ANDROID_RELEASE.md sagen zu, dass ein unbeabsichtigter Schluesselwechsel hier auffaellt;
+      # ein Waechter, der schweigend gruen wird, loest diese Zusage nicht ein.
       - name: Signatur-Fingerabdruck protokollieren
         if: steps.signing.outputs.signed == 'true'
         run: |
           set -euo pipefail
-          keytool -list -keystore "$FEEDBACK_KEYSTORE_FILE" -storetype PKCS12 \
+          keytool -list -v -keystore "$FEEDBACK_KEYSTORE_FILE" -storetype PKCS12 \
             -storepass "$FEEDBACK_STORE_PASSWORD" -alias "$FEEDBACK_KEY_ALIAS" \
-            | grep -i "SHA256" || true
+            | grep -Ei "sha-?256"
+
+      # Zwei Builds aus demselben Quelltext mit verschiedenen Ankern sind von aussen sonst nicht
+      # zu unterscheiden (THREAT_MODEL 4.10 und 4.20). ANDROID_RELEASE.md verlangt die Angabe;
+      # bis hierher stand sie nur dort und nicht im Releasetext.
+      - name: Serveradresse fuer den Releasetext bestimmen
+        id: anchor
+        run: |
+          set -euo pipefail
+          if [ -n "${FEEDBACK_SERVER_URL}" ]; then
+            echo "line=Diese APK ist fuer **${FEEDBACK_SERVER_URL}** gebaut. Nur diese Adresse akzeptiert sie aus einem Einrichtungslink." >> "$GITHUB_OUTPUT"
+          else
+            echo "line=Diese APK ist **ohne feste Serveradresse** gebaut: die Adresse wird von Hand eingetragen, und jeder Einrichtungslink wird abgelehnt." >> "$GITHUB_OUTPUT"
+          fi
 
       - name: APK benennen
         run: cp android/app/build/outputs/apk/release/app-release.apk Feedback.apk
@@ -144,6 +162,8 @@ jobs:
           name: "Feedback - Android-App"
           body: |
             Aktuelle Release-APK von Feedback, automatisch aus `main` gebaut.
+
+            ${{ steps.anchor.outputs.line }}
 
             **Was Feedback ist:** eine Verwaltungs-App fuer eigene bzw. ausdruecklich
             autorisierte Geraete. Kopplung erfolgt sichtbar und bestaetigt, Faehigkeiten
@@ -171,6 +191,8 @@ jobs:
           name: "Feedback - Android-App"
           body: |
             Aktuelle Release-APK von Feedback, automatisch aus `main` gebaut.
+
+            ${{ steps.anchor.outputs.line }}
 
             **Was Feedback ist:** eine Verwaltungs-App fuer eigene bzw. ausdruecklich
             autorisierte Geraete. Kopplung erfolgt sichtbar und bestaetigt, Faehigkeiten

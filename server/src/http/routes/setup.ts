@@ -1,5 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
+import type { AppConfig } from '../../config.js';
+import { anchorOrigin } from '../../config.js';
 import type { AppContext } from '../../context.js';
 import { ProtocolError } from '../../errors.js';
 
@@ -24,12 +26,27 @@ import { ProtocolError } from '../../errors.js';
  * `DOCUMENT_CSP` has no `'unsafe-inline'`, so a `<style>` element in the head is dropped by the
  * browser; and on an API only deployment (`FEEDBACK_STATIC_DIR` unset) this page is served under
  * `API_CSP`, where `default-src 'none'` blocks a separate stylesheet route as well. Styling this
- * page would therefore mean widening a security policy - for four paragraphs that a browser's
- * default stylesheet already renders readably. The viewport meta element is not CSS and is
- * enough to keep it legible on a phone.
+ * page would therefore mean widening a security policy - for a handful of paragraphs that a
+ * browser's default stylesheet already renders readably. The viewport meta element is not CSS
+ * and is enough to keep it legible on a phone.
  */
-function renderSetupPage(serverOrigin: string): string {
-  const origin = escapeHtml(serverOrigin);
+function renderSetupPage(serverOrigin: string | undefined): string {
+  // Two versions of one section, never a half sentence with an empty value in it: an address is
+  // the thing the visitor is asked to decide by, so the page either states one or says that it
+  // cannot.
+  const server =
+    serverOrigin === undefined
+      ? `<p>Diese Seite nennt bewusst keine Adresse. Dieser Server ist ohne
+<code>FEEDBACK_PUBLIC_ORIGIN</code> konfiguriert und kann seine eigene oeffentliche Adresse
+deshalb nicht sicher angeben - und eine geratene waere genau die Angabe, auf die Sie sich hier
+nicht verlassen duerfen.</p>
+<p>Die App uebernimmt aus einem Link niemals eine Serveradresse. Sie akzeptiert ihn nur, wenn er
+auf genau den Server zeigt, den sie ohnehin schon kennt. Ein Link, der nicht zu Ihrem Server
+gehoert, wird deshalb abgelehnt - auch dann, wenn diese Seite ihn nicht benennen kann.</p>`
+      : `<p>Diese Seite gehoert zu: <strong>${escapeHtml(serverOrigin)}</strong></p>
+<p>Die App uebernimmt aus einem Link niemals eine Serveradresse. Sie akzeptiert ihn nur, wenn er
+auf genau den Server zeigt, den sie ohnehin schon kennt. Passt die Adresse oben nicht zu Ihrem
+Server, gehoert der Link nicht zu Ihnen.</p>`;
   return `<!doctype html>
 <html lang="de">
 <head>
@@ -50,10 +67,7 @@ installiert, oder der Link ist fuer diese Installation noch nicht verifiziert.</
 <li>Den Link auf dem Geraet erneut oeffnen. Den Rest uebernimmt die App.</li>
 </ol>
 <h2>Server</h2>
-<p>Diese Seite gehoert zu: <strong>${origin}</strong></p>
-<p>Die App uebernimmt aus einem Link niemals eine Serveradresse. Sie akzeptiert ihn nur, wenn er
-auf genau den Server zeigt, den sie ohnehin schon kennt. Passt die Adresse oben nicht zu Ihrem
-Server, gehoert der Link nicht zu Ihnen.</p>
+${server}
 </body>
 </html>
 `;
@@ -90,34 +104,52 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"]/g, (character) => HTML_ESCAPES[character] ?? character);
 }
 
-function originOf(value: string): string | undefined {
-  try {
-    return new URL(value).origin;
-  } catch {
+/**
+ * The address the page names as its own - or `undefined` when this deployment has not been given
+ * one it can stand behind.
+ *
+ * Never the `Host` header: that value is chosen by whoever sends the request, and the one hard
+ * statement on this page must not come from the visitor. "Some configured origin" is not good
+ * enough either, which is what this used to be. `FEEDBACK_ALLOWED_ORIGINS` names the Control
+ * Center, and BETRIEB.md 3.1 explicitly allows that to sit on a different host than the API; on
+ * such a deployment the page printed a domain that is not this server at all - under a sentence
+ * telling the visitor to reject the link if the domain looks wrong. It also printed whatever
+ * scheme was configured, so the shipped `.env.example` produced `http://localhost:5173`: an
+ * address the app rejects outright, offered as the thing to compare against.
+ *
+ * So: `FEEDBACK_PUBLIC_ORIGIN` is the only value that names this server on purpose, and it is
+ * checked against the app's own rule before it is ever printed ({@link anchorOrigin}).
+ *
+ * Without it, one case remains in which the answer is known rather than guessed. With
+ * `FEEDBACK_STATIC_DIR` the browser loads the Control Center from this very origin, so this
+ * origin has to be among the allowed ones - otherwise the Control Center's own login would fail
+ * its Origin check and the deployment would not work at all. If exactly one allowed origin can
+ * serve as an anchor, that one is this server.
+ *
+ * Everything else names nothing. On a page whose whole purpose is that the visitor may rely on
+ * the address, a guess presented as a fact is worse than an honest blank.
+ */
+function advertisedOrigin(config: AppConfig): string | undefined {
+  if (config.publicOrigin !== undefined) {
+    // Checked here as well, not merely trusted from the configuration: this function is what
+    // promises the page never names an address the app would refuse, and a promise that holds
+    // only as long as every builder of an AppConfig remembers the rule is not one. It also
+    // normalises - a port 443 written out is dropped, because the comparison the visitor is
+    // asked to make is character equality.
+    return anchorOrigin(config.publicOrigin);
+  }
+  if (config.staticDir === undefined) {
     return undefined;
   }
-}
-
-/**
- * The address the page shows.
- *
- * Always one of the configured origins, never the `Host` header itself. `Host` is chosen by
- * whoever sends the request, and the one piece of hard information on this page - "this is the
- * server you are talking to" - must not be a value the visitor supplied. The header only selects
- * among the configured origins when a deployment has more than one; anything else falls back to
- * the first, which is the origin the deployment advertises.
- */
-function advertisedOrigin(request: FastifyRequest, allowedOrigins: readonly string[]): string {
-  const configured = allowedOrigins.map((entry) => originOf(entry) ?? entry);
-  const host = request.headers.host;
-  if (typeof host === 'string') {
-    const candidate = originOf(`${request.protocol}://${host}`);
-    if (candidate !== undefined && configured.includes(candidate)) {
-      return candidate;
+  const candidates = new Set<string>();
+  for (const entry of config.allowedOrigins) {
+    const origin = anchorOrigin(entry);
+    if (origin !== undefined) {
+      candidates.add(origin);
     }
   }
-  // FEEDBACK_ALLOWED_ORIGINS is validated to hold at least one entry, so the first one exists.
-  return configured[0] ?? '';
+  const [only] = candidates;
+  return candidates.size === 1 ? only : undefined;
 }
 
 /**
@@ -136,9 +168,13 @@ export async function registerSetupRoutes(
 ): Promise<void> {
   const { config } = context;
 
-  async function sendSetupPage(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  // Rendered once: the page depends only on the configuration, so nothing a request carries can
+  // change a byte of it - which is also what makes it safe to serve to anyone.
+  const page = renderSetupPage(advertisedOrigin(config));
+
+  async function sendSetupPage(_request: FastifyRequest, reply: FastifyReply): Promise<void> {
     reply.header('Content-Type', 'text/html; charset=utf-8');
-    await reply.send(renderSetupPage(advertisedOrigin(request, config.allowedOrigins)));
+    await reply.send(page);
   }
 
   // Both spellings are registered: Fastify matches a path literally, and a link someone typed

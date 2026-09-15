@@ -278,10 +278,17 @@ damit spaeter niemand aus ihnen ein Protokollelement macht.
 | `GET` | `/.well-known/assetlinks.json` | keine | Digital-Asset-Links-Datei, nur bei konfiguriertem Signatur-Fingerabdruck; sonst `404` |
 
 Beide werden von Hand oder vom Betriebssystem geoeffnet, nicht von einem Client, der dieses
-Protokoll spricht. Beide antworten anonym: keine Sitzung, kein Cookie, und - der Teil, der zaehlt -
-**keine Aussage ueber den Kopplungszustand** dieser Installation. Weder wie viele Geraete
-registriert sind, noch ob gerade eine Kopplung offen ist, noch wem sie gehoert. Die Seite nennt
-allein die Origin, zu der sie gehoert; `assetlinks.json` nennt Paketnamen und genau einen
+Protokoll spricht. Beide sind **rate-limitiert**: sie werden oeffentlich beworben - gedruckt,
+weitergeleitet, gescannt - und brauchen deshalb dieselbe Obergrenze wie die API. Sie nehmen dafuer
+das `apiDefault`-Budget aus Abschnitt 11 (600 je 10 Minuten), zaehlen es aber in einem **eigenen
+Schluessel-Scope** (`ip-setup`): im Mobilfunknetz kommen Besitzer und Fremde regelmaessig von
+derselben IP, und wer die Einrichtungsseite flutet, soll damit nicht das API-Budget dieser IP
+aufbrauchen. Einen Prinzipal gibt es hier nicht, gezaehlt wird allein die IP.
+
+Beide antworten anonym: keine Sitzung, kein Cookie, und - der Teil, der zaehlt - **keine Aussage
+ueber den Kopplungszustand** dieser Installation. Weder wie viele Geraete registriert sind, noch
+ob gerade eine Kopplung offen ist, noch wem sie gehoert. Die Seite nennt allein die Origin, zu der
+sie gehoert; `assetlinks.json` nennt Paketnamen und genau einen
 Fingerabdruck und wird als `application/json` ausgeliefert, weil dieser Medientyp von aussen
 vorgeschrieben ist.
 
@@ -295,9 +302,10 @@ Ausdruecklich **nicht**:
   sind.
 
 Ein Link ist damit auch kein Vertrauensanker. Was die App mit einer Origin aus einem Link tun darf,
-entscheidet sie allein: sie uebernimmt sie nur, wenn sie zeichengleich ist mit der eingebauten oder
-der bereits registrierten Origin (`docs/security/THREAT_MODEL.md` 4.20). Der Server kann daran
-nichts erlauben und nichts verbieten.
+entscheidet sie allein: sie akzeptiert sie nur, wenn sie zeichengleich ist mit der eingebauten oder
+der bereits registrierten Origin, und in ihr Adressfeld schreibt sie sie nur, solange das Geraet
+nicht gekoppelt ist (`docs/security/THREAT_MODEL.md` 4.20). Der Server kann daran nichts erlauben
+und nichts verbieten.
 
 ## 7. WebSocket-Envelope
 
@@ -965,6 +973,13 @@ Rate Limits (Token Bucket, pro IP und pro Prinzipal):
 | `POST /devices/{id}/screen/session` | 20 / 10 min |
 | `POST /devices/{id}/screen/keyframe` | 60 / 10 min |
 | sonstige `/api/v1` | 600 / 10 min |
+| `GET /pair`, `GET /pair/`, `GET /.well-known/assetlinks.json` | 600 / 10 min |
+
+Die letzte Zeile liegt ausserhalb von `/api/v1` und ausserhalb dieses Protokolls (Abschnitt 6.3).
+Sie nimmt dasselbe `apiDefault`-Budget, zaehlt es aber in einem eigenen Schluessel-Scope
+(`ip-setup`) statt im Scope der API-Routen, damit eine Flut gegen die oeffentliche
+Einrichtungsseite nicht das API-Budget derselben IP verbraucht. Die drei Pfade teilen sich dabei
+einen Eimer je IP. Einen Prinzipal gibt es auf diesen Routen nicht; gezaehlt wird allein die IP.
 
 ## 12. Logging
 
