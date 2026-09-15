@@ -1,3 +1,9 @@
+// Imported rather than written out as java.net.URI at the point of use: inside a Gradle Kotlin DSL
+// script `java` already resolves to the project's JavaPluginExtension accessor, so the qualified
+// form is read as a property access on that extension and fails to compile.
+import java.net.URI
+import java.net.URISyntaxException
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -60,8 +66,8 @@ fun normalizedServerOrigin(raw: String): String {
     )
 
     val uri = try {
-        java.net.URI(raw)
-    } catch (_: java.net.URISyntaxException) {
+        URI(raw)
+    } catch (_: URISyntaxException) {
         reject("it is not a valid URI")
     }
     if (!uri.scheme.equals("https", ignoreCase = true)) {
