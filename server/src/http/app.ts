@@ -108,7 +108,11 @@ export async function buildApp(context: AppContext): Promise<FastifyInstance> {
 
   app.addHook('onRequest', async (request, reply) => {
     reply.header('X-Request-Id', String(request.id));
-    applySecurityHeaders(reply, config.isProduction);
+    // Only a response that a browser renders as a document gets the wider policy, and only when
+    // this server delivers the Control Center itself. An API only deployment keeps
+    // `default-src 'none'` on every path it answers.
+    const servesDocument = config.staticDir !== undefined && !request.url.startsWith(API_PREFIX);
+    applySecurityHeaders(reply, config.isProduction, servesDocument);
     applyCorsHeaders(request, reply, config.allowedOrigins);
   });
 

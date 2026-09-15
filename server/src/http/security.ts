@@ -13,13 +13,47 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 export const CORS_ALLOWED_HEADERS = 'content-type, x-feedback-csrf';
 export const CORS_ALLOWED_METHODS = 'GET, POST, PUT, DELETE, OPTIONS';
 
-export function applySecurityHeaders(reply: FastifyReply, isProduction: boolean): void {
+/**
+ * For API answers. They are JSON read by a script that is already running, so nothing at all may
+ * be loaded from them.
+ */
+export const API_CSP = "default-src 'none'; frame-ancestors 'none'";
+
+/**
+ * For the Control Center, when the server delivers it itself (`FEEDBACK_STATIC_DIR`).
+ *
+ * The API policy cannot be used here: a document under `default-src 'none'` may not load its own
+ * script or its own stylesheet, so the page arrives and stays blank - with the reason only visible
+ * in the browser console. Verified in Chromium against the built bundle, because an HTTP level
+ * test sees a 200 with the right content type and cannot see a policy violation at all.
+ *
+ * Everything stays `'self'`: no inline script, no inline style, no foreign origin. `connect-src`
+ * covers the API calls and the `screen.view` event stream, `data:` under `img-src` covers a QR
+ * code drawn into the page. `base-uri` and `form-action` are closed because this page has neither.
+ */
+export const DOCUMENT_CSP = [
+  "default-src 'none'",
+  "script-src 'self'",
+  "style-src 'self'",
+  "img-src 'self' data:",
+  "connect-src 'self'",
+  "font-src 'self'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join('; ');
+
+export function applySecurityHeaders(
+  reply: FastifyReply,
+  isProduction: boolean,
+  servesDocument = false,
+): void {
   reply.header('X-Content-Type-Options', 'nosniff');
   reply.header('X-Frame-Options', 'DENY');
   reply.header('Referrer-Policy', 'no-referrer');
   reply.header('Cross-Origin-Opener-Policy', 'same-origin');
   reply.header('Cross-Origin-Resource-Policy', 'same-origin');
-  reply.header('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+  reply.header('Content-Security-Policy', servesDocument ? DOCUMENT_CSP : API_CSP);
   reply.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   reply.header('Cache-Control', 'no-store');
   if (isProduction) {
