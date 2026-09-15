@@ -58,6 +58,18 @@ export class FeedbackApi {
     return session;
   }
 
+  /**
+   * Confirms the password for the short window in which a capability may be granted
+   * (THREAT_MODEL 4.5). The password is passed through and never stored on this side.
+   */
+  async reauthenticate(password: string): Promise<{ elevatedUntil: string }> {
+    return this.request<{ elevatedUntil: string }>(
+      '/auth/reauthenticate',
+      { method: 'POST', body: JSON.stringify({ password }) },
+      true,
+    );
+  }
+
   async logout(): Promise<void> {
     await this.request<{ status: string }>(
       '/auth/logout',

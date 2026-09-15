@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { SESSION_COOKIE_NAME } from '../../auth/sessionService.js';
+import { CONTROL_ELEVATION_TTL_MS } from '../../constants.js';
 import type { AppContext } from '../../context.js';
 import { normalizeEmail } from '../../db/repositories/index.js';
 import { ProtocolError } from '../../errors.js';
@@ -20,6 +21,12 @@ const loginSchema = z
   .object({
     email: z.string().trim().min(3).max(254).email(),
     password: z.string().min(1).max(1024),
+  })
+  .strict();
+
+const reauthenticateSchema = z
+  .object({
+    password: z.string().min(1).max(512),
   })
   .strict();
 
@@ -110,6 +117,62 @@ export async function registerAuthRoutes(
 
     return { status: 'ok' };
   });
+
+  /*
+   * The second step in front of granting a capability (THREAT_MODEL 4.5).
+   *
+   * On the device a grant asks for the app lock again; in the Control Center it asked for nothing,
+   * so a taken-over browser window could grant everything server-side with one click. This is the
+   * mirror of that prompt: the password, once, for a short window.
+   *
+   * Rate limited under the same bucket as the login and keyed by the account as well, because it
+   * is the same thing being guessed.
+   */
+  app.post(
+    '/auth/reauthenticate',
+    { config: { rateLimit: 'authLogin' } },
+    async (request, reply) => {
+      assertBrowserContext(request, context.config.allowedOrigins);
+      await requireSession(context, request, reply);
+      requireCsrf(context, request);
+      const principal = requirePrincipal(request);
+      const body = parseOrThrow(reauthenticateSchema, request.body);
+
+      consumeRateLimit(context, 'authLogin', 'account', normalizeEmail(principal.user.email));
+
+      const outcome = await context.authProviders.require('password').authenticate({
+        method: 'password',
+        email: principal.user.email,
+        password: body.password,
+      });
+      if (!outcome.ok || outcome.user.id !== principal.user.id) {
+        await context.audit.record({
+          eventType: 'auth.reauthenticate.failure',
+          result: 'failure',
+          userId: principal.user.id,
+          sessionId: principal.session.id,
+        });
+        /*
+         * REAUTH_REQUIRED, not UNAUTHORIZED. The session is still perfectly valid - only the
+         * confirmation did not happen. Answering 401 here would be a statement about the session,
+         * and the Control Center would have to log the owner out over a typo.
+         */
+        throw new ProtocolError('REAUTH_REQUIRED', 'Passwort ist falsch');
+      }
+
+      await context.sessions.elevate(principal.session.id);
+      await context.audit.record({
+        eventType: 'auth.reauthenticate',
+        result: 'success',
+        userId: principal.user.id,
+        sessionId: principal.session.id,
+      });
+
+      return {
+        elevatedUntil: new Date(context.clock.now() + CONTROL_ELEVATION_TTL_MS).toISOString(),
+      };
+    },
+  );
 
   app.get('/auth/session', async (request, reply) => {
     await requireSession(context, request, reply);

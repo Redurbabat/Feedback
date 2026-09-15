@@ -22,6 +22,7 @@ function toRecord(row: Row): AuthSessionRecord {
     lastSeenAt: row.lastSeenAt,
     revokedAt: row.revokedAt,
     rotatedFrom: row.rotatedFrom,
+    elevatedUntil: row.elevatedUntil,
   };
 }
 
@@ -41,6 +42,8 @@ export class SqliteAuthSessionRepository implements AuthSessionRepository {
         lastSeenAt: now,
         revokedAt: null,
         rotatedFrom: input.rotatedFrom ?? null,
+        // A fresh login is deliberately not elevated - see AuthSessionRecord.elevatedUntil.
+        elevatedUntil: null,
       })
       .returning()
       .get();
@@ -58,6 +61,10 @@ export class SqliteAuthSessionRepository implements AuthSessionRepository {
 
   async touch(id: string, at: number): Promise<void> {
     this.db.update(authSessions).set({ lastSeenAt: at }).where(eq(authSessions.id, id)).run();
+  }
+
+  async elevate(id: string, until: number): Promise<void> {
+    this.db.update(authSessions).set({ elevatedUntil: until }).where(eq(authSessions.id, id)).run();
   }
 
   async revoke(id: string, at: number): Promise<void> {

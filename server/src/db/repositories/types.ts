@@ -44,6 +44,13 @@ export interface AuthSessionRecord {
   readonly lastSeenAt: number;
   readonly revokedAt: number | null;
   readonly rotatedFrom: string | null;
+  /**
+   * Until when this session has most recently confirmed the password, or null for never.
+   *
+   * Null is the normal state, including right after logging in: if a fresh login counted as
+   * confirmation, the login would be the second step and there would not be one.
+   */
+  readonly elevatedUntil: number | null;
 }
 
 export interface CreateAuthSessionInput {
@@ -57,6 +64,7 @@ export interface AuthSessionRepository {
   create(input: CreateAuthSessionInput): Promise<AuthSessionRecord>;
   findByTokenHash(tokenHash: string): Promise<AuthSessionRecord | undefined>;
   touch(id: string, at: number): Promise<void>;
+  elevate(id: string, until: number): Promise<void>;
   revoke(id: string, at: number): Promise<void>;
   revokeAllForUser(userId: string, at: number): Promise<void>;
   deleteExpired(before: number): Promise<number>;

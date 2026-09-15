@@ -102,13 +102,15 @@ Diese Zusage stand hier, bevor der Code sie einloeste. Bis zur Haertung passiert
 `https://example.com:0` jede Pruefung - `java.net.URI` liefert fuer all das einen Host, und mehr
 wurde nicht verlangt. Solange der Besitzer die Adresse abtippen musste, war der Schaden begrenzt;
 mit einem Einrichtungslink waere er es nicht mehr.
-**Residual** **Kein Certificate Pinning.** Eine im System- oder Nutzerspeicher installierte
-CA kann die Verbindung aufbrechen. Was seit der Server-Identitaet dazukommt, ersetzt es nicht,
-deckt aber einen Teil ab: wer die TLS-Strecke aufbricht, aber den Server-Schluessel nicht hat,
-kommt an keinem Verbindungsaufbau mehr vorbei, weil der Nachweis aus
-`POST /agent/server-identity` die Signatur und nicht das Zertifikat prueft. Wer den Datenstrom
-einer *bestehenden* Verbindung mitliest, wird davon nicht gehindert. Auf einem Geraet, auf dem jemand eine CA installieren kann,
-ist ohnehin mehr verloren; ein Pinning waere trotzdem eine echte Verbesserung und ist offen.
+**Residual** **Kein Certificate Pinning.** Eine im System- oder Nutzerspeicher installierte CA
+kann die Verbindung aufbrechen. Auf einem Geraet, auf dem jemand eine CA installieren kann, ist
+ohnehin mehr verloren; ein Pinning waere trotzdem eine echte Verbesserung und ist offen.
+
+Die Server-Identitaet ersetzt das nicht, deckt aber ein Stueck davon ab: wer die TLS-Strecke
+aufbricht, ohne den Server-Schluessel zu haben, kommt an keinem Verbindungsaufbau mehr vorbei -
+der Nachweis aus `POST /agent/server-identity` prueft eine Signatur und kein Zertifikat, und das
+Geraet sendet seinen Token erst danach. Wer den Datenstrom einer **bestehenden** Verbindung
+mitliest, wird davon nicht gehindert.
 
 ### 4.5 Gestohlenes Browser-Session-Cookie
 
@@ -117,10 +119,24 @@ ist ohnehin mehr verloren; ein Pinning waere trotzdem eine echte Verbesserung un
 **Mitigation** HttpOnly, `SameSite=Strict`, `Secure` in Produktion, serverseitige Sitzungstabelle
 mit Ablauf, Rotation beim Login, CSRF-Token plus Origin-Pruefung bei jeder schreibenden Anfrage.
 Kein Token im `localStorage`.
-**Residual** Erheblich. Es gibt **keine zweite Stufe** fuer das Erteilen einer Capability im
-Control Center - anders als auf dem Geraet, wo eine Freigabe die App-Sperre erneut verlangt. Ein
-uebernommenes Browserfenster kann serverseitig alles freigeben. Was es **nicht** kann: die lokale
-Freigabe auf dem Geraet setzen. Die Und-Verknuepfung ist genau dafuer da.
+
+Dazu die **zweite Stufe vor jeder Freigabe** (PROTOCOL 6.2): `PUT /devices/{id}/capabilities`
+verlangt eine Session, die das Kontopasswort innerhalb von `CONTROL_ELEVATION_TTL_MS` bestaetigt
+hat, sobald der neue Satz eine vorher nicht freigegebene Capability enthaelt. Ohne diese Anhebung
+antwortet der Server `REAUTH_REQUIRED` und aendert nichts. Die Anhebung gilt nur fuer die eine
+Session; ein Cookie allein reicht nicht mehr. Das spiegelt die App-Sperre, die auf dem Geraet vor
+jeder lokalen Freigabe erneut abgefragt wird.
+
+Das **Entziehen** verlangt sie ausdruecklich nicht. Waere Widerrufen so teuer wie Freigeben, dann
+waere ausgerechnet der Moment, in dem der Besitzer etwas abstellen will, weil etwas nicht stimmt,
+der Moment, in dem er ein Passwort suchen muss.
+
+**Residual** Verringert, nicht beseitigt. Wer die Sitzung **und** das Passwort hat, kommt weiterhin
+durch - und wer den Browser zu dem Zeitpunkt uebernimmt, an dem der Besitzer gerade selbst
+bestaetigt hat, findet ein angehobenes Fenster von bis zu fuenf Minuten vor. Die Stufe kostet einen
+Angreifer das Passwort oder ein enges Zeitfenster, sie ersetzt keinen zweiten Faktor: Feedback hat
+keinen. Was ein uebernommenes Fenster in keinem Fall kann, ist die lokale Freigabe auf dem Geraet
+setzen. Die Und-Verknuepfung ist genau dafuer da.
 
 ### 4.6 Kompromittierter Server
 
@@ -222,7 +238,8 @@ die das Geraet bei jeder einzelnen Anfrage neu prueft. Ein Bereich gehoert genau
 eine bekannte `shareId` ohne die passende Capability liefert `NOT_FOUND`, nicht `FORBIDDEN`.
 Nicht implementierte Capabilities antworten `UNSUPPORTED`, auch wenn alle vier Faktoren erteilt
 sind. `tools/validators/check-protocol-constants.mjs` haelt die Listen auf allen Seiten gleich.
-**Residual** Der Weg ueber 4.5 bleibt: wer die Browsersitzung hat, kann serverseitig freigeben.
+**Residual** Der Weg ueber 4.5 bleibt: wer die Browsersitzung **und** das Passwort hat, kann
+serverseitig freigeben.
 
 ### 4.13 WebSocket-Hijacking
 

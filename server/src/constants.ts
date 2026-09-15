@@ -11,6 +11,14 @@ export const PROTOCOL_VERSION = 1 as const;
 export const PAIRING_TTL_MS = 300_000;
 export const PAIRING_MAX_LOOKUP_ATTEMPTS = 5;
 export const CLOCK_SKEW_MS = 120_000;
+
+/**
+ * How long a Control Center session stays elevated after confirming the password.
+ *
+ * Short on purpose. It is the window in which granting a capability needs no further proof, so it
+ * is also the window a stolen session would have to land in (THREAT_MODEL 4.5).
+ */
+export const CONTROL_ELEVATION_TTL_MS = 300_000;
 export const NONCE_RETENTION_MS = 900_000;
 export const REMOTE_SESSION_TTL_MS = 60_000;
 export const AGENT_REQUEST_TIMEOUT_MS = 10_000;

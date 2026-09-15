@@ -7,6 +7,8 @@ package com.redurbabat.feedback.protocol
 enum class ProtocolError(val code: String, val httpStatus: Int) {
     UNAUTHORIZED("UNAUTHORIZED", 401),
     FORBIDDEN("FORBIDDEN", 403),
+    /** Control-Center-seitig: die Sitzung muss das Passwort erneut bestaetigen. */
+    REAUTH_REQUIRED("REAUTH_REQUIRED", 403),
     SESSION_EXPIRED("SESSION_EXPIRED", 409),
     DEVICE_REVOKED("DEVICE_REVOKED", 403),
     CAPABILITY_DENIED("CAPABILITY_DENIED", 403),

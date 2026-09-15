@@ -2,7 +2,11 @@ import { randomBytes } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
 
-import { HEARTBEAT_INTERVAL_MS, HEARTBEAT_MISS_LIMIT } from '../../src/constants.js';
+import {
+  CONTROL_ELEVATION_TTL_MS,
+  HEARTBEAT_INTERVAL_MS,
+  HEARTBEAT_MISS_LIMIT,
+} from '../../src/constants.js';
 import { sha256Hex } from '../../src/crypto/tokens.js';
 import {
   DEFAULT_METADATA,
@@ -11,6 +15,7 @@ import {
   createHarness,
   createTestDevice,
   createTestUser,
+  elevate,
   login,
   randomPassword,
 } from '../helpers/harness.js';
@@ -22,6 +27,9 @@ interface ProvisionedDevice {
   readonly publicDeviceId: string;
   readonly token: string;
   readonly session: LoggedIn;
+  /** The owner's credentials, so a test can take the second step in front of a grant. */
+  readonly email: string;
+  readonly password: string;
 }
 
 async function provisionOwnedDevice(harness: Harness): Promise<ProvisionedDevice> {
@@ -52,6 +60,8 @@ async function provisionOwnedDevice(harness: Harness): Promise<ProvisionedDevice
     publicDeviceId: record.deviceId,
     token,
     session,
+    email,
+    password,
   };
 }
 
@@ -143,6 +153,7 @@ describe('device and agent routes', () => {
     const harness = await createHarness();
     try {
       const provisioned = await provisionOwnedDevice(harness);
+      await elevate(harness, provisioned.session, provisioned.password);
 
       const update = await harness.app.inject({
         method: 'PUT',
@@ -253,5 +264,158 @@ describe('device and agent routes', () => {
     } finally {
       await harness.close();
     }
+  });
+  /*
+   * THREAT_MODEL 4.5. The grant is the dangerous direction, so only the grant asks again.
+   */
+  describe('the second step in front of a capability grant', () => {
+    it('refuses a grant from a session that has not confirmed the password', async () => {
+      const harness = await createHarness();
+      try {
+        const provisioned = await provisionOwnedDevice(harness);
+
+        const response = await harness.app.inject({
+          method: 'PUT',
+          url: `/api/v1/devices/${provisioned.recordId}/capabilities`,
+          headers: controlHeaders(provisioned.session),
+          payload: { grantedCapabilities: ['system.info'] },
+        });
+
+        expect(response.statusCode).toBe(403);
+        expect((response.json() as { error: { code: string } }).error.code).toBe('REAUTH_REQUIRED');
+        // And nothing was granted on the way to the refusal.
+        expect(
+          await harness.context.repositories.deviceCapabilities.listForDevice(provisioned.recordId),
+        ).toEqual([]);
+      } finally {
+        await harness.close();
+      }
+    });
+
+    /*
+     * The asymmetry is deliberate: the moment the owner most wants to revoke is the moment
+     * something is wrong, and that is the worst moment to send them looking for a password.
+     */
+    it('lets the same unelevated session revoke a capability', async () => {
+      const harness = await createHarness();
+      try {
+        const provisioned = await provisionOwnedDevice(harness);
+        await harness.context.repositories.deviceCapabilities.setGranted({
+          deviceId: provisioned.recordId,
+          capability: 'system.info',
+          granted: true,
+          grantedBy: provisioned.session.userId,
+        });
+
+        const response = await harness.app.inject({
+          method: 'PUT',
+          url: `/api/v1/devices/${provisioned.recordId}/capabilities`,
+          headers: controlHeaders(provisioned.session),
+          payload: { grantedCapabilities: [] },
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(
+          (response.json() as { serverGrantedCapabilities: string[] }).serverGrantedCapabilities,
+        ).toEqual([]);
+      } finally {
+        await harness.close();
+      }
+    });
+
+    /** Re-sending the set that is already granted adds nothing, so it needs no confirmation. */
+    it('lets an unelevated session re-send the capabilities it already granted', async () => {
+      const harness = await createHarness();
+      try {
+        const provisioned = await provisionOwnedDevice(harness);
+        await harness.context.repositories.deviceCapabilities.setGranted({
+          deviceId: provisioned.recordId,
+          capability: 'system.info',
+          granted: true,
+          grantedBy: provisioned.session.userId,
+        });
+
+        const response = await harness.app.inject({
+          method: 'PUT',
+          url: `/api/v1/devices/${provisioned.recordId}/capabilities`,
+          headers: controlHeaders(provisioned.session),
+          payload: { grantedCapabilities: ['system.info'] },
+        });
+
+        expect(response.statusCode).toBe(200);
+      } finally {
+        await harness.close();
+      }
+    });
+
+    it('refuses the wrong password and does not elevate the session', async () => {
+      const harness = await createHarness();
+      try {
+        const provisioned = await provisionOwnedDevice(harness);
+
+        const wrong = await harness.app.inject({
+          method: 'POST',
+          url: '/api/v1/auth/reauthenticate',
+          headers: controlHeaders(provisioned.session),
+          payload: { password: `${provisioned.password}-nicht` },
+        });
+        // Not 401: the session is still valid, only the confirmation failed. A 401 here would
+        // send the Control Center back to the login screen over a typo.
+        expect(wrong.statusCode).toBe(403);
+        expect((wrong.json() as { error: { code: string } }).error.code).toBe('REAUTH_REQUIRED');
+
+        const grant = await harness.app.inject({
+          method: 'PUT',
+          url: `/api/v1/devices/${provisioned.recordId}/capabilities`,
+          headers: controlHeaders(provisioned.session),
+          payload: { grantedCapabilities: ['system.info'] },
+        });
+        expect((grant.json() as { error: { code: string } }).error.code).toBe('REAUTH_REQUIRED');
+      } finally {
+        await harness.close();
+      }
+    });
+
+    it('lets the confirmation expire', async () => {
+      const harness = await createHarness();
+      try {
+        const provisioned = await provisionOwnedDevice(harness);
+        await elevate(harness, provisioned.session, provisioned.password);
+
+        harness.clock.advance(CONTROL_ELEVATION_TTL_MS + 1);
+
+        const response = await harness.app.inject({
+          method: 'PUT',
+          url: `/api/v1/devices/${provisioned.recordId}/capabilities`,
+          headers: controlHeaders(provisioned.session),
+          payload: { grantedCapabilities: ['system.info'] },
+        });
+        expect(response.statusCode).toBe(403);
+        expect((response.json() as { error: { code: string } }).error.code).toBe('REAUTH_REQUIRED');
+      } finally {
+        await harness.close();
+      }
+    });
+
+    /** Confirming in one browser must not unlock the grant in another. */
+    it('elevates one session, not the account', async () => {
+      const harness = await createHarness();
+      try {
+        const provisioned = await provisionOwnedDevice(harness);
+        const second = await login(harness, provisioned.email, provisioned.password);
+        await elevate(harness, provisioned.session, provisioned.password);
+
+        const response = await harness.app.inject({
+          method: 'PUT',
+          url: `/api/v1/devices/${provisioned.recordId}/capabilities`,
+          headers: controlHeaders(second),
+          payload: { grantedCapabilities: ['system.info'] },
+        });
+        expect(response.statusCode).toBe(403);
+        expect((response.json() as { error: { code: string } }).error.code).toBe('REAUTH_REQUIRED');
+      } finally {
+        await harness.close();
+      }
+    });
   });
 });

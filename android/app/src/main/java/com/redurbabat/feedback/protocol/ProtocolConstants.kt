@@ -7,6 +7,12 @@ object ProtocolConstants {
     const val PAIRING_TTL_MS = 300_000L
     const val PAIRING_MAX_LOOKUP_ATTEMPTS = 5
     const val CLOCK_SKEW_MS = 120_000L
+
+    /**
+     * Control-Center-seitig, hier nur gespiegelt, damit Abschnitt 11 an einer Stelle vollstaendig
+     * ist - wie PAIRING_MAX_LOOKUP_ATTEMPTS, das auf dem Geraet ebenfalls nichts tut.
+     */
+    const val CONTROL_ELEVATION_TTL_MS = 300_000L
     const val NONCE_RETENTION_MS = 900_000L
     const val REMOTE_SESSION_TTL_MS = 60_000L
     const val HEARTBEAT_INTERVAL_MS = 30_000L

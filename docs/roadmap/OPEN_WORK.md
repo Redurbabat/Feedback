@@ -266,6 +266,15 @@ ausfuehrlich benannt:
 
   Offen bleibt das erste Pairing: Trust on first use schuetzt jedes Mal ausser dem ersten. Wer
   von Anfang an mit dem Falschen koppelt, pinnt den Falschen.
+- ~~**Eine uebernommene Browsersitzung kann mit einem Klick alles freigeben.**~~ **Verringert.**
+  `PUT /devices/{id}/capabilities` verlangt jetzt eine Session, die das Kontopasswort ueber
+  `POST /auth/reauthenticate` bestaetigt hat, sobald der neue Satz eine vorher nicht freigegebene
+  Capability enthaelt; ohne das antwortet der Server `REAUTH_REQUIRED` und aendert nichts. Das
+  Entziehen bleibt bewusst ohne Passwort.
+
+  Was offen bleibt: wer die Sitzung **und** das Passwort hat, kommt weiterhin durch, und die
+  Anhebung haelt bis zu fuenf Minuten - ein Angreifer, der genau dann uebernimmt, findet sie
+  offen vor. Feedback hat keinen zweiten Faktor; das hier ersetzt keinen.
 
 ## 7. Naechster konkreter Schritt
 

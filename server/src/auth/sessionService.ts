@@ -7,6 +7,7 @@ import type {
   UserRepository,
 } from '../db/repositories/types.js';
 import { randomToken, sha256Hex, timingSafeEqualString } from '../crypto/tokens.js';
+import { CONTROL_ELEVATION_TTL_MS } from '../constants.js';
 import type { Clock } from '../services/clock.js';
 
 /**
@@ -96,6 +97,24 @@ export class SessionService {
     }
     await this.deps.authSessions.touch(session.id, now);
     return { session, user, csrfToken: this.csrfTokenFor(session) };
+  }
+
+  /**
+   * Records that this session has just proved the password again.
+   *
+   * Deliberately not done on login: if logging in counted, the login would be the second step and
+   * there would not be one. See THREAT_MODEL 4.5.
+   */
+  async elevate(sessionId: string): Promise<void> {
+    await this.deps.authSessions.elevate(
+      sessionId,
+      this.deps.clock.now() + CONTROL_ELEVATION_TTL_MS,
+    );
+  }
+
+  /** Whether the confirmation is still inside its window. */
+  isElevated(session: Pick<AuthSessionRecord, 'elevatedUntil'>): boolean {
+    return session.elevatedUntil !== null && session.elevatedUntil > this.deps.clock.now();
   }
 
   async revoke(sessionId: string): Promise<void> {

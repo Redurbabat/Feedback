@@ -146,6 +146,28 @@ export async function registerDeviceRoutes(
       }
     }
 
+    /*
+     * The second step, and only in one direction (THREAT_MODEL 4.5).
+     *
+     * On the device a grant asks for the app lock again. Here it asked for nothing, so a
+     * taken-over browser window could grant everything with one click. Now it needs the password
+     * confirmed within CONTROL_ELEVATION_TTL_MS.
+     *
+     * Taking a capability away never does. Making a revocation harder than a grant would mean
+     * that the moment the owner most wants to act - something is wrong, close it now - is the
+     * moment they have to go looking for a password. The asymmetry is the point.
+     */
+    const before = await context.repositories.deviceCapabilities.listForDevice(device.id);
+    const alreadyGranted = new Set(grantedCapabilities(before));
+    const added = [...requested].filter((capability) => !alreadyGranted.has(capability));
+    if (added.length > 0 && !context.sessions.isElevated(principal.session)) {
+      throw new ProtocolError(
+        'REAUTH_REQUIRED',
+        'Zum Freigeben einer Faehigkeit bitte das Passwort bestaetigen',
+        { logDetail: { added: added.length } },
+      );
+    }
+
     for (const capability of IMPLEMENTED_CAPABILITIES_V1) {
       await context.repositories.deviceCapabilities.setGranted({
         deviceId: device.id,

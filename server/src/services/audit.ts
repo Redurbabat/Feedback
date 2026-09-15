@@ -11,6 +11,8 @@ export const AUDIT_EVENT_TYPES = [
   'auth.login.success',
   'auth.login.failure',
   'auth.logout',
+  'auth.reauthenticate',
+  'auth.reauthenticate.failure',
   'pairing.start',
   'pairing.lookup',
   'pairing.approve',

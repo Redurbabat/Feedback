@@ -36,6 +36,7 @@ export const authSessions = sqliteTable(
     lastSeenAt: integer('last_seen_at').notNull(),
     revokedAt: integer('revoked_at'),
     rotatedFrom: text('rotated_from'),
+    elevatedUntil: integer('elevated_until'),
   },
   (table) => [
     uniqueIndex('auth_sessions_token_hash_unique').on(table.tokenHash),

@@ -2,6 +2,12 @@ import './styles.css';
 
 import { ApiError, FeedbackApi } from './api.ts';
 import {
+  confirmationRefusalFor,
+  nextCapabilities,
+  refusalFor,
+  type PendingGrant,
+} from './elevation.ts';
+import {
   currentDirectoryId,
   enterDirectory,
   entryMeta,
@@ -96,6 +102,14 @@ class ControlCenterApp {
    */
   private screenCanvas: HTMLCanvasElement | null = null;
   private screenSummaryNode: HTMLElement | null = null;
+  /**
+   * A grant the server refused until the password is confirmed (THREAT_MODEL 4.5).
+   *
+   * The refused set is kept here and repeated verbatim, so a poll that refreshes the device
+   * in the meantime cannot turn the confirmed grant into a different one. The password itself
+   * is never held - it goes straight from the field into the request.
+   */
+  private pendingElevation: (PendingGrant & { readonly title: string }) | null = null;
 
   constructor(private readonly root: HTMLElement) {}
 
@@ -174,11 +188,54 @@ class ControlCenterApp {
         this.render();
       }));
     }
+    if (this.pendingElevation !== null) {
+      content.append(this.elevationView(this.pendingElevation));
+    }
     content.append(this.selectedDeviceView());
 
     main.append(sidebar, content);
     shell.append(main);
     return shell;
+  }
+
+  /**
+   * The password prompt in front of a grant (THREAT_MODEL 4.5).
+   *
+   * It names the device and the capability, because a prompt that only says "please confirm your
+   * password" teaches the owner to type it without reading - which is what an attacker who took
+   * over the browser window would be counting on.
+   */
+  private elevationView(pending: PendingGrant & { readonly title: string }): HTMLElement {
+    const section = card('Freigabe bestätigen', 'Zweiter Schritt');
+    section.body.append(
+      text(
+        'p',
+        `„${pending.title}" soll für „${pending.deviceName}" serverseitig freigegeben werden. `
+          + 'Bitte einmal das Kontopasswort eingeben. Entziehen bleibt jederzeit ohne Passwort möglich.',
+      ),
+    );
+
+    const form = document.createElement('form');
+    form.className = 'stack';
+    const password = labeledInput('Passwort', 'password', 'current-password', 'Passwort');
+    password.input.autofocus = true;
+    const submit = button('Freigeben', 'primary');
+    submit.type = 'submit';
+    submit.disabled = this.busy;
+    const cancel = button('Abbrechen', 'ghost');
+    cancel.disabled = this.busy;
+    cancel.addEventListener('click', () => this.cancelElevation());
+
+    const actions = div('button-row');
+    actions.append(submit, cancel);
+    form.append(password.wrapper, actions);
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      void this.confirmElevation(password.input.value);
+    });
+
+    section.body.append(form);
+    return section.root;
   }
 
   private topbarView(): HTMLElement {
@@ -361,6 +418,9 @@ class ControlCenterApp {
         // show the previous device's shares under a different name.
         this.resetFilesState();
         this.resetScreenState();
+        // A pending grant belongs to one device. Carrying it over would let a confirmation
+        // land on a device the owner is no longer looking at.
+        this.pendingElevation = null;
         this.message = null;
         this.render();
       });
@@ -483,7 +543,9 @@ class ControlCenterApp {
     toggle.setAttribute('aria-label', `${title} serverseitig freigeben`);
     toggle.disabled = this.busy;
     toggle.append(document.createElement('span'));
-    toggle.addEventListener('click', () => void this.setCapability(device, capability, !granted));
+    toggle.addEventListener('click', () => {
+      void this.setCapability(device, capability, title, !granted);
+    });
     row.append(copy, toggle);
     return row;
   }
@@ -1291,6 +1353,7 @@ class ControlCenterApp {
       this.pairingCode = '';
       this.systemInfo = null;
       this.auditEvents = [];
+      this.pendingElevation = null;
       this.message = null;
       this.busy = false;
       this.render();
@@ -1364,40 +1427,94 @@ class ControlCenterApp {
   private async setCapability(
     device: DeviceView,
     capability: string,
+    title: string,
     enabled: boolean,
   ): Promise<void> {
     if (this.busy) return;
     this.busy = true;
+    const granted = nextCapabilities(device.serverGrantedCapabilities, capability, enabled);
     try {
-      // The endpoint replaces the whole set, so the new list is built from what the
-      // device already has - toggling one capability must not silently drop another.
-      const next = new Set(device.serverGrantedCapabilities);
-      if (enabled) {
-        next.add(capability);
-      } else {
-        next.delete(capability);
-      }
-      await this.api.setCapabilities(device.id, [...next]);
-      this.message = {
-        kind: 'info',
-        text: enabled
-          ? 'Serverseitig freigegeben. Die lokale Android-Freigabe bleibt zusätzlich erforderlich.'
-          : 'Serverseitige Freigabe entfernt.',
-      };
-      if (capability === 'system.info') {
-        this.systemInfo = null;
-      }
-      if (SHARE_CAPABILITIES.includes(capability) && !enabled) {
-        // The open session may have been opened for exactly this capability.
-        this.resetFilesState();
-      }
+      await this.api.setCapabilities(device.id, granted);
+      this.afterCapabilityChange(capability, enabled);
       await this.refreshDevices(false);
     } catch (error) {
+      const refusal = refusalFor(error, {
+        deviceId: device.id,
+        deviceName: device.name,
+        capability,
+        grants: enabled,
+        grantedCapabilities: granted,
+      });
+      if (refusal.kind === 'ask_for_password') {
+        this.pendingElevation = { ...refusal.pending, title };
+        this.message = null;
+      } else {
+        this.handleApiError(error);
+      }
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+
+  private afterCapabilityChange(capability: string, enabled: boolean): void {
+    this.message = {
+      kind: 'info',
+      text: enabled
+        ? 'Serverseitig freigegeben. Die lokale Android-Freigabe bleibt zusätzlich erforderlich.'
+        : 'Serverseitige Freigabe entfernt.',
+    };
+    if (capability === 'system.info') {
+      this.systemInfo = null;
+    }
+    if (SHARE_CAPABILITIES.includes(capability) && !enabled) {
+      // The open session may have been opened for exactly this capability.
+      this.resetFilesState();
+    }
+  }
+
+  /**
+   * Confirms the password and repeats the refused grant unchanged (THREAT_MODEL 4.5).
+   *
+   * A wrong password leaves the prompt standing so the owner can try again; the grant is only
+   * repeated after the server accepted the confirmation.
+   */
+  private async confirmElevation(password: string): Promise<void> {
+    const pending = this.pendingElevation;
+    if (this.busy || pending === null) return;
+    this.busy = true;
+    try {
+      await this.api.reauthenticate(password);
+    } catch (error) {
+      this.busy = false;
+      if (confirmationRefusalFor(error) === 'wrong_password') {
+        this.message = { kind: 'error', text: 'Passwort ist falsch. Bitte erneut eingeben.' };
+      } else {
+        this.pendingElevation = null;
+        this.handleApiError(error);
+      }
+      this.render();
+      return;
+    }
+
+    try {
+      await this.api.setCapabilities(pending.deviceId, [...pending.grantedCapabilities]);
+      this.pendingElevation = null;
+      this.afterCapabilityChange(pending.capability, true);
+      await this.refreshDevices(false);
+    } catch (error) {
+      this.pendingElevation = null;
       this.handleApiError(error);
     } finally {
       this.busy = false;
       this.render();
     }
+  }
+
+  private cancelElevation(): void {
+    this.pendingElevation = null;
+    this.message = { kind: 'info', text: 'Freigabe abgebrochen. Es wurde nichts geändert.' };
+    this.render();
   }
 
   private async loadSystemInfo(device: DeviceView): Promise<void> {
@@ -1458,6 +1575,7 @@ class ControlCenterApp {
       this.api.setCsrfToken(null);
       this.devices = [];
       this.selectedDeviceId = null;
+      this.pendingElevation = null;
       this.message = { kind: 'error', text: 'Die Sitzung ist abgelaufen. Bitte erneut anmelden.' };
       return;
     }

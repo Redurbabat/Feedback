@@ -302,6 +302,7 @@ erzeugt vom Server und gelesen von beiden Seiten.
 | `POST` | `/auth/login` | Anmeldung, setzt HttpOnly-Session-Cookie |
 | `POST` | `/auth/logout` | Abmeldung |
 | `GET` | `/auth/session` | aktuelle Session + CSRF-Token |
+| `POST` | `/auth/reauthenticate` | Passwort bestaetigen, hebt die Session kurzzeitig an |
 | `POST` | `/pairing/lookup` | Pending-Pairing per `ticket` oder `displayCode` aufloesen |
 | `POST` | `/pairing/{pairingId}/approve` | Kopplung bestaetigen (Proof erforderlich) |
 | `POST` | `/pairing/{pairingId}/reject` | Kopplung ablehnen (Proof erforderlich) |
@@ -332,6 +333,25 @@ Aufrufe.
 
 Alle zustandsaendernden Anfragen verlangen den Header `X-Feedback-CSRF` mit dem Wert aus
 `GET /auth/session` und einen gueltigen `Origin`/`Sec-Fetch-Site`-Kontext.
+
+#### Zweiter Schritt vor einer Freigabe
+
+`PUT /devices/{id}/capabilities` verlangt zusaetzlich eine angehobene Session, **sobald der neue
+Satz mindestens eine Capability enthaelt, die vorher nicht freigegeben war**. Fehlt die Anhebung,
+antwortet der Server `REAUTH_REQUIRED` (403) und aendert nichts.
+
+Angehoben wird eine Session durch `POST /auth/reauthenticate` mit `{ "password": "..." }`. Die
+Antwort enthaelt `elevatedUntil` (ISO-8601). Die Anhebung gilt `CONTROL_ELEVATION_TTL_MS` lang und
+gilt **nur fuer diese eine Session** - eine Bestaetigung im einen Browser hebt keinen anderen an.
+Ein falsches Passwort beantwortet der Server ebenfalls mit `REAUTH_REQUIRED`, nicht mit
+`UNAUTHORIZED`: die Session bleibt gueltig, nur die Bestaetigung hat nicht stattgefunden. `401` an
+dieser Stelle waere eine Aussage ueber die Session und wuerde den Besitzer wegen eines Tippfehlers
+abmelden.
+
+Das **Entziehen** einer Capability verlangt die Anhebung ausdruecklich nicht, und ein erneutes
+Senden eines bereits freigegebenen Satzes ebenfalls nicht. Die Asymmetrie ist beabsichtigt: der
+Moment, in dem der Besitzer am dringendsten widerrufen will, ist der schlechteste Moment, um ihn
+nach einem Passwort suchen zu lassen.
 
 ### 6.3 Oeffentliche Einrichtungsseiten (kein Protokollbestandteil)
 
@@ -965,6 +985,7 @@ Abgelaufene oder widerrufene Sessions werden auf beiden Seiten abgelehnt
 | --- | --- | --- |
 | `UNAUTHORIZED` | keine gueltige Anmeldung/Token | 401 |
 | `FORBIDDEN` | authentifiziert, aber nicht berechtigt | 403 |
+| `REAUTH_REQUIRED` | Sitzung muss das Passwort erneut bestaetigen | 403 |
 | `SESSION_EXPIRED` | Remote-Session abgelaufen/ungueltig | 409 |
 | `DEVICE_REVOKED` | Geraet wurde widerrufen | 403 |
 | `CAPABILITY_DENIED` | Capability nicht freigegeben | 403 |
@@ -987,6 +1008,7 @@ unterschieden, solange das die Brute-Force-Analyse erleichtern wuerde.
 | `PAIRING_TTL_MS` | 300000 |
 | `PAIRING_MAX_LOOKUP_ATTEMPTS` | 5 |
 | `CLOCK_SKEW_MS` | 120000 |
+| `CONTROL_ELEVATION_TTL_MS` | 300000 |
 | `NONCE_RETENTION_MS` | 900000 |
 | `REMOTE_SESSION_TTL_MS` | 60000 |
 | `HEARTBEAT_INTERVAL_MS` | 30000 |

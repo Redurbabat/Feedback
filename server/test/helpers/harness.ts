@@ -294,3 +294,24 @@ export async function startPairing(
   }
   return response.json() as StartedPairing;
 }
+
+/**
+ * Raises a logged in session to the elevated state that granting a capability requires
+ * (THREAT_MODEL 4.5). Takes the password explicitly rather than carrying it inside `LoggedIn`,
+ * so a test that elevates says so at the call site.
+ */
+export async function elevate(
+  harness: Harness,
+  session: LoggedIn,
+  password: string,
+): Promise<void> {
+  const response = await harness.app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/reauthenticate',
+    headers: controlHeaders(session),
+    payload: { password },
+  });
+  if (response.statusCode !== 200) {
+    throw new Error(`reauthenticate failed with ${response.statusCode}: ${response.body}`);
+  }
+}
