@@ -277,21 +277,42 @@ class BackgroundAgentService : Service() {
         @Volatile
         private var currentAgent: DeviceAgentClient? = null
 
+        /**
+         * Whether the notification this service must show can actually be shown. The background
+         * connection is only allowed to exist while it is visible, so this is a precondition and
+         * not a nicety.
+         */
+        fun notificationsVisible(context: Context): Boolean =
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(
+                    context.applicationContext,
+                    Manifest.permission.POST_NOTIFICATIONS,
+                ) == PackageManager.PERMISSION_GRANTED
+
         /** Starts only after an explicit visible-app action by the owner. */
         fun start(context: Context) {
             val appContext = context.applicationContext
-            val notificationsVisible =
-                Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-                    ContextCompat.checkSelfPermission(
-                        appContext,
-                        Manifest.permission.POST_NOTIFICATIONS,
-                    ) == PackageManager.PERMISSION_GRANTED
-            if (!notificationsVisible) {
+            if (!notificationsVisible(appContext)) {
                 BackgroundConnectionStore(appContext).setEnabled(false)
                 throw SecurityException("Notification permission is required for background mode")
             }
 
             BackgroundConnectionStore(appContext).setEnabled(true)
+            launchService(appContext)
+        }
+
+        /**
+         * Continues a connection the owner already enabled, after a reboot or an app update.
+         *
+         * Unlike [start] this never writes the preference. A broadcast may carry on what was
+         * granted; granting stays with the owner in front of the app. Whether it may run at all is
+         * decided in [BootResumePolicy] before this is called.
+         */
+        fun resume(context: Context) {
+            launchService(context.applicationContext)
+        }
+
+        private fun launchService(appContext: Context) {
             val intent = Intent(appContext, BackgroundAgentService::class.java).apply {
                 action = ACTION_START
             }

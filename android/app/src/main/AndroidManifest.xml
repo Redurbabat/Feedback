@@ -12,6 +12,14 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+      Only so the background connection survives a restart. Without it the owner had to open the
+      app once after every reboot, and nothing said so - the device just stayed offline. It grants
+      no data access of its own: the receiver may continue a connection the owner switched on and
+      can never switch one on, and the same switch in the app revokes it.
+    -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <application
         android:allowBackup="false"
         android:label="Feedback"
@@ -80,6 +88,20 @@
             android:name=".screen.ScreenCaptureService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+
+        <!--
+          Exported because the system is the sender. Both actions are protected broadcasts, so no
+          app can fake them, and the action is checked again in BootResumePolicy.
+        -->
+        <receiver
+            android:name=".agent.BootReceiver"
+            android:exported="true"
+            android:directBootAware="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <service
             android:name=".agent.BackgroundAgentService"

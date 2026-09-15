@@ -28,6 +28,32 @@ es keine Hintergrundverbindung geben.
   nicht zurueck.
 - Reconnect mit exponentiellem Backoff und Jitter, gedeckelt. Kein Polling.
 - Ein Widerruf des Geraets beendet den Dienst.
+- **Nach einem Neustart des Geraets und nach einem App-Update kommt die Verbindung von selbst
+  zurueck** (`BootReceiver`). `START_STICKY` deckt nur ab, dass das System den Dienst beendet,
+  nicht dass es herunterfaehrt: vorher musste der Besitzer die App nach jedem Neustart einmal
+  oeffnen, und nichts sagte das - das Geraet stand einfach offline im Control Center.
+
+### Warum der Boot-Empfaenger nicht die versteckte Persistenz ist, die unten abgelehnt wird
+
+Der Unterschied liegt in der Richtung, und er ist in `BootResumePolicy` als einzige Regel
+festgeschrieben: **ein Broadcast darf fortsetzen, was der Besitzer eingeschaltet hat, und niemals
+etwas einschalten.** Ist der Schalter aus, passiert nichts. Ohne diese Regel waere ein Neustart ein
+Weg, sich eine Hintergrundverbindung zu verschaffen, die nie erteilt wurde.
+
+Dazu drei Einzelheiten, die jede fuer sich eine stille Fehlfunktion gewesen waeren:
+
+- `RECEIVE_BOOT_COMPLETED` ist die einzige neue Berechtigung. Sie gibt keinen Zugriff auf Daten.
+  Der Widerrufspfad ist derselbe Schalter wie bisher: aus heisst aus, auch ueber Neustarts.
+- Der Empfaenger ist **nicht** `directBootAware`. `BOOT_COMPLETED` kommt damit erst, wenn der
+  Besitzer entsperrt hat - und erst dann ist die versiegelte Registrierung ueberhaupt lesbar.
+  Frueher zu starten hiesse, sie nicht lesen zu koennen und den Schalter grundlos auszuschalten.
+- Laesst sich die Benachrichtigung nicht mehr zeigen (auf Android 13+ zurueckgezogene
+  Berechtigung), wird der Schalter ausgeschaltet statt unsichtbar weiterzulaufen. Eine
+  Hintergrundverbindung, die der Besitzer nicht in der Statusleiste sieht, ist genau die
+  versteckte Fernsteuerung, die dieses Projekt nicht baut.
+
+Einen Foreground Service aus dem Hintergrund zu starten ist sonst verboten; `BOOT_COMPLETED` und
+`MY_PACKAGE_REPLACED` sind benannte Ausnahmen. Deshalb ein Empfaenger und kein geplanter Job.
 
 ## Was hier bewusst NICHT gemacht wird
 
@@ -57,6 +83,9 @@ Benachrichtigungstext, der eine Taetigkeit behauptet, die gerade nicht laeuft, d
 
 ## Abnahme
 
-**Nicht abgenommen auf Hardware.** Die Zustandslogik und die Backoff-Berechnung sind unit-getestet
-und in CI gruen. Nicht geprueft: Verhalten unter Doze, nach dem Entfernen aus den Recents, bei
-Netzwechsel, und der reale Akkuverbrauch. Siehe `docs/testing/ANDROID_DEVICE_MATRIX.md`.
+**Nicht abgenommen auf Hardware.** Die Zustandslogik, die Backoff-Berechnung und die Regel des
+Boot-Empfaengers sind unit-getestet und in CI gruen. Nicht geprueft: Verhalten unter Doze, nach dem
+Entfernen aus den Recents, bei Netzwechsel, und der reale Akkuverbrauch. **Ebenfalls ungeprueft:
+ob der Dienst auf echter Hardware nach einem Neustart wirklich wiederkommt.** Getestet ist die
+Entscheidung, nicht ihre Ausfuehrung - manche Hersteller-Oberflaechen halten Autostart zusaetzlich
+zurueck, und das zeigt erst ein Geraet. Siehe `docs/testing/ANDROID_DEVICE_MATRIX.md`.

@@ -65,7 +65,17 @@ verbreiteten Testbestand mehr hat; Android 7 wird als "unverifiziert lauffaehig"
 26. Benachrichtigungsberechtigung auf Android 13+.
 27. Hintergrundverbindung aktivieren: dauerhafte Benachrichtigung sichtbar.
 28. Beenden-Aktion in der Benachrichtigung stoppt den Dienst.
-29. Kein Autostart nach Geraeteneustart.
+29. Geraeteneustart bei **eingeschalteter** Hintergrundverbindung: die Benachrichtigung ist nach
+    dem Entsperren wieder da, das Geraet steht ohne Zutun online im Control Center. Der Schalter
+    darf dafuer nicht angefasst werden muessen.
+29a. Geraeteneustart bei **ausgeschalteter** Hintergrundverbindung: es startet nichts. Ein
+    Neustart darf nie einschalten, was der Besitzer nicht eingeschaltet hat.
+29b. Benachrichtigungsberechtigung in den Systemeinstellungen entziehen, dann neu starten: der
+    Dienst laeuft nicht weiter, und der Schalter in der App steht danach auf aus.
+29c. App-Update ueber die installierte Version druebersetzen: die Verbindung kommt wie nach einem
+    Neustart zurueck.
+29d. Hersteller-Oberflaechen mit eigener Autostart-Verwaltung (Xiaomi, Huawei, Oppo, Samsung)
+    gesondert notieren - dort kann 29 fehlschlagen, ohne dass etwas am Code falsch ist.
 30. Reconnect nach WLAN-Verlust.
 31. Wechsel WLAN zu Mobilfunk.
 32. Verhalten in Doze (Geraet laenger unbenutzt liegen lassen).

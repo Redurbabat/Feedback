@@ -283,6 +283,26 @@ Drei Dinge, die auf diesem Weg wirklich stoeren koennen:
 - **Bedrohung 4.15 gilt voll.** Der Anbieter hat den Klartext im Zugriff - Dateien, `system.info`
   und den Bildstrom. Bei 3.1.3 ist das nicht so.
 
+### 3.1.5 Wenn der Server nur zeitweise laeuft
+
+Laeuft der Server auf einem PC, der nicht durchgehend an ist, gilt:
+
+- **Server aus**: die Geraete stehen offline. Es gibt keinen Weg am Server vorbei, er vermittelt
+  alles.
+- **Server wieder an**: das Geraet meldet sich von selbst zurueck. Der Agent versucht es nach
+  `5 s`, dann verdoppelt, gedeckelt bei `5 min` mit 80-120 % Streuung - spaetestens nach etwa
+  sechs Minuten steht die Verbindung wieder. Nichts ist zu tun.
+- **Die Kopplung ueberlebt das.** Geraete-Token und Server-Adresse liegen versiegelt neben dem
+  Keystore-Schluessel; ein ausgeschalteter Server ist fuer das Geraet ein Netzausfall, kein
+  Identitaetswechsel. Erneutes Koppeln ist nicht noetig.
+- **Geraet neu gestartet**: der `BootReceiver` bringt die Hintergrundverbindung zurueck, sofern
+  der Besitzer sie eingeschaltet hatte (`docs/architecture/BACKGROUND_SERVICE.md`). Ob das auf
+  jeder Hersteller-Oberflaeche klappt, ist nicht auf Hardware geprueft - manche halten Autostart
+  zusaetzlich zurueck.
+
+Ein schlafender PC ist dabei dasselbe wie ein ausgeschalteter. Wer jederzeit zugreifen will,
+schaltet den Ruhezustand ab oder nimmt einen kleinen Dauerlaeufer.
+
 ### 3.2 Dauerhafter Weg: eigener Host
 
 Gleiche Schritte, aber mit einem echten Hostnamen, einem Zertifikat (z. B. Let's Encrypt) und
