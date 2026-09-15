@@ -85,8 +85,19 @@ ist der bewusste Preis dafuer, das Fenster eng zu halten.
 
 **Impact** sehr hoch. **Likelihood** niedrig bei korrektem TLS.
 **Mitigation** Ausschliesslich HTTPS/WSS. `ServerEndpoint.parse` auf Android erzwingt `https://`
-mit echtem Hostnamen - keine IP, kein Klartext, kein selbstsigniertes Zertifikat; das Manifest
-setzt `usesCleartextTraffic="false"`.
+mit einem registrierbaren Hostnamen: mindestens zwei Labels, kein Punkt am Ende, nur
+Buchstaben/Ziffern/Bindestrich, und die letzte Marke darf nicht aus Ziffern bestehen - daran
+scheitern IPv4-Literale, ohne dass es dafuer eine eigene Regel braucht. IPv6-Literale kommen nicht
+durch, weil `[` kein erlaubtes Zeichen ist; ein Port ausserhalb 1..65535 ebenfalls nicht.
+Punycode (`xn--...`) bleibt erlaubt - es ist ein echter Name - und wird nie dekodiert, damit ein
+Homograph als `xn--...` sichtbar bleibt statt als der Name, den er nachahmt. Das Manifest setzt
+`usesCleartextTraffic="false"`.
+
+Diese Zusage stand hier, bevor der Code sie einloeste. Bis zur Haertung passierten
+`https://192.168.1.10`, `https://[2001:db8::1]:8443`, `https://example.com.` und
+`https://example.com:0` jede Pruefung - `java.net.URI` liefert fuer all das einen Host, und mehr
+wurde nicht verlangt. Solange der Besitzer die Adresse abtippen musste, war der Schaden begrenzt;
+mit einem Einrichtungslink waere er es nicht mehr.
 **Residual** **Kein Certificate Pinning.** Eine im System- oder Nutzerspeicher installierte
 CA kann die Verbindung aufbrechen. Auf einem Geraet, auf dem jemand eine CA installieren kann,
 ist ohnehin mehr verloren; ein Pinning waere trotzdem eine echte Verbesserung und ist offen.
