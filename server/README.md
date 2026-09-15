@@ -79,6 +79,17 @@ Lokalen Benutzer anlegen:
 npm run user:create -- --email <adresse>
 ```
 
+Sicherung (darf bei laufendem Server laufen):
+
+```bash
+npm run backup -- --out /pfad/zur/sicherung
+```
+
+Schreibt Datenbank **und** `identity.pem` zusammen. Die Datenbank geht ueber SQLites
+Online-Backup, nicht als Dateikopie, und wird danach geoeffnet und geprueft. Sind Geraete
+gekoppelt und fehlt der Schluessel, bricht der Befehl ab: eine Sicherung ohne ihn stellt die
+Kopplungen nicht wieder her. Siehe `docs/deployment/BETRIEB.md` 3.7.
+
 Echte Secrets gehoeren ausschliesslich in lokale Umgebungsvariablen. `server/.env.example` enthaelt nur Beispielnamen und keine produktiven Werte.
 
 Der Server speichert keine privaten Geraeteschluessel und persistiert standardmaessig keine Datei-, Foto-, Video- oder Bildschirm-Inhalte.

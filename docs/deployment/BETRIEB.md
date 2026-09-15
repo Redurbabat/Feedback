@@ -501,7 +501,27 @@ ein Startabbruch ist die Meldung, auf die Sie reagieren koennen.
 
 Er liegt bewusst **nicht** in der Datenbank: dort stehen Geheimnisse ausschliesslich als
 SHA-256-Abdruck (`drizzle/0001_init.sql`), und ein privater Schluessel wuerde diesen Satz falsch
-machen. Der Preis steht in Abschnitt 4: **sichern Sie beide Dateien zusammen.**
+machen. Der Preis ist, dass beide Dateien zusammengehoeren - und dafuer gibt es einen Befehl:
+
+```bash
+cd server
+npm run backup -- --out /pfad/zur/sicherung
+```
+
+Er darf **bei laufendem Server** laufen: die Datenbank wird ueber SQLites Online-Backup kopiert,
+nicht als Datei. Eine Dateikopie waere bei einem schreibenden Server zerrissen. Danach oeffnet er
+die Sicherung noch einmal, laesst `PRAGMA integrity_check` laufen und vergleicht die Anzahl der
+Geraete - eine Sicherung, die niemand aufgemacht hat, ist eine Vermutung.
+
+`identity.pem` wird mitgeschrieben, mit Rechten `0600`. Fehlt der Schluessel, waehrend Geraete
+gekoppelt sind, **bricht der Befehl mit Fehler ab** statt eine Sicherung zu hinterlassen, die im
+Ernstfall nicht wiederherstellt.
+
+Zum Wiederherstellen beide Dateien zurueckspielen - der Befehl druckt die zwei `cp`-Zeilen mit
+den richtigen Pfaden aus. Geprueft, nicht behauptet: nach dem Zurueckspielen beider Dateien
+antwortet der Server mit **demselben** oeffentlichen Schluessel wie vorher, die Kopplungen
+ueberleben also. Spielt man nur die Datenbank zurueck, erzeugt der Server beim Start einen neuen
+Schluessel, und jedes Geraet meldet "Server nicht wiedererkannt".
 
 **Wenn ein Geraet "Server nicht wiedererkannt" meldet**, hat es unter der gewohnten Adresse einen
 anderen Schluessel angetroffen. Es hat nichts gesendet und versucht es nicht erneut. Zwei Faelle:
@@ -523,11 +543,9 @@ zu wechseln, ist eine bewusste Neukopplung.
 - **Kein Container und kein Deployment-Skript.** Der Betrieb ist handgemacht. Einen
   unauthentifizierten `GET /health` gibt es, aber nichts fragt ihn ab - und wer ihn abfragt,
   erkennt damit eine Feedback-Installation (Threat Model 4.21).
-- **Keine Backup-Strategie.** Die SQLite-Datei enthaelt Benutzer, Geraete und Audit-Eintraege.
-  **Und sie allein genuegt nicht mehr:** daneben liegt `identity.pem`, der Schluessel, an dem die
-  Geraete diesen Server wiedererkennen (Abschnitt 3.7). Wer nur die Datenbank sichert und den
-  Schluessel verliert, bekommt einen Server zurueck, den jedes gekoppelte Geraet fuer einen
-  fremden haelt - zu Recht. Beide Dateien gehoeren in dieselbe Sicherung.
+- **Sicherung: es gibt einen Befehl, aber keinen Zeitplan.** `npm run backup -- --out <ordner>`
+  schreibt beide Dateien zusammen (Abschnitt 3.7). Was fehlt, ist etwas, das ihn regelmaessig
+  aufruft, und ein Ort ausserhalb dieser Maschine.
 - **Kein Monitoring.** Ein abgestuerzter Prozess faellt dadurch auf, dass Geraete offline gehen.
 - Ein Tunnel-Hostname wechselt je nach Dienst bei jedem Start. Aendert sich die Server-URL,
   muss das Geraet neu gekoppelt werden - die Registrierung haengt an der Adresse.

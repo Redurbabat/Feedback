@@ -17,7 +17,8 @@
     "test:run": "vitest run",
     "test:watch": "vitest",
     "migrate": "tsx src/db/migrateCli.ts",
-    "user:create": "tsx src/scripts/createUser.ts"
+    "user:create": "tsx src/scripts/createUser.ts",
+    "backup": "tsx src/scripts/backup.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
