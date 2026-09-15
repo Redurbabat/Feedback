@@ -43,6 +43,13 @@ jobs:
       FEEDBACK_KEY_PASSWORD: ${{ secrets.FEEDBACK_KEY_PASSWORD }}
       FEEDBACK_KEY_ALIAS: ${{ secrets.FEEDBACK_KEY_ALIAS }}
 
+      # Bewusst eine Repository-Variable und kein Secret. Der Hostname ist nicht geheim - er steht
+      # im Manifest der veroeffentlichten APK und in der assetlinks.json des Servers. Er gehoert
+      # aber trotzdem nicht ins Repository, weil er zur Installation des Besitzers gehoert und
+      # nicht zum Quelltext. Ist die Variable nicht gesetzt, baut die App ohne feste Serveradresse:
+      # die Adresse wird dann wie bisher eingetippt und Einrichtungslinks werden abgelehnt.
+      FEEDBACK_SERVER_URL: ${{ vars.FEEDBACK_SERVER_URL }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v5

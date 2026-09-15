@@ -1,6 +1,6 @@
 # Android Release und APK-Signatur
 
-Stand: 2026-09-13
+Stand: 2026-09-15
 
 ## Warum das sicherheitsrelevant ist
 
@@ -19,6 +19,21 @@ Signaturwechsel  ->  Deinstallation noetig  ->  Keystore-Schluessel geloescht
 
 Eine stabile Signatur ist deshalb kein Komfortthema, sondern Teil des
 Sicherheits- und Betriebsmodells.
+
+## Der feste Schluessel ist Voraussetzung, nicht Empfehlung
+
+Bis hierher war ein fester Signaturschluessel eine dringende Empfehlung. Mit den
+Einrichtungslinks (`BETRIEB.md` 3.6) ist er **Voraussetzung**: ohne ihn gibt es weder eine
+gueltige `assetlinks.json` noch eine nachpruefbare Herkunft der APK.
+
+- **Keine gueltige `assetlinks.json`.** Die Datei nennt genau einen Fingerabdruck. Wechselt die
+  Signatur zwischen Builds, ist diese Angabe mit dem naechsten Build falsch - und niemand bekommt
+  davon eine Meldung. Es faellt nichts aus, keine Anfrage schlaegt fehl; der Link wird nur nicht
+  mehr verifiziert und oeffnet wieder den Browser.
+- **Keine nachpruefbare Herkunft.** Eine APK, die nicht manipuliert, sondern nur mit einer anderen
+  `FEEDBACK_SERVER_URL` gebaut wurde, ist von aussen nicht von der echten zu unterscheiden
+  (Threat Model 4.10 und 4.20). Das einzige Merkmal, das die beiden trennt, ist die Signatur - und
+  sie trennt nur dann etwas, wenn sie ueber Builds hinweg dieselbe bleibt.
 
 ## Bedienung
 
@@ -51,11 +66,45 @@ Repository → Settings → Secrets and variables → Actions:
 Die Keystore-Datei selbst wird **nie** committet. `.gitignore` schliesst
 `*.p12`, `*.jks` und `*.keystore` bereits aus.
 
+### Einmalig: Serveradresse hinterlegen
+
+Repository → Settings → Secrets and variables → Actions → **Variables**:
+
+| Variable | Inhalt |
+| --- | --- |
+| `FEEDBACK_SERVER_URL` | `https://<deine-domain>` - genau die Origin, kein Pfad, kein Port |
+
+Eine Variable und kein Secret: der Hostname steht im Manifest jeder veroeffentlichten APK und in
+der `assetlinks.json` des Servers, er ist also ohnehin oeffentlich. Er gehoert trotzdem nicht ins
+Repository, weil er zur Installation des Besitzers gehoert und nicht zum Quelltext. Ohne die
+Variable baut die App ohne festen Anker - die Adresse wird wie bisher eingetippt, und jeder
+Einrichtungslink wird abgelehnt. Die Gegenseite dieser Einstellung ist
+`FEEDBACK_ANDROID_CERT_SHA256` in der Server-`.env`; beides zusammen beschreibt `BETRIEB.md` 3.6.
+
+### Beim Schluesselwechsel: Fingerabdruck ersetzen, nie ergaenzen
+
+Ein Schluesselwechsel bedeutet ohnehin Deinstallation und neue Kopplung. Dazu kommt ein zweiter
+Schritt: `FEEDBACK_ANDROID_CERT_SHA256` auf dem Server bekommt den **neuen** Fingerabdruck an die
+Stelle des alten.
+
+Das Dateiformat von `assetlinks.json` erlaubt eine Liste, und darin liegt die Falle. Ein
+angehaengter alter Fingerabdruck laesst einem Schluessel, der verloren, abgeflossen oder schlicht
+vergessen ist, eine **verifizierte Beanspruchung dieser Domain**: jede App, die mit ihm signiert
+ist, gilt Android dann als die App dieses Servers. Die Konfiguration nimmt deshalb genau einen
+Wert. Ersetzen ist der einzige Weg, und das ist Absicht.
+
 ### Laufend: Release erzeugen
 
 `.github/workflows/android-release.yml` laeuft bei jeder Android-Aenderung auf
 `main` und bei manuellem Start. Ergebnis ist ein Release mit festem Tag `apk`,
 aus dem die Datei `Feedback.apk` direkt auf dem Handy geladen werden kann.
+
+**Was der Release-Text nennen muss.** Der Signatur-Fingerabdruck steht heute im Build-Log, damit
+ein unbeabsichtigter Schluesselwechsel auffaellt. Aus demselben Grund gehoert die verwendete
+`FEEDBACK_SERVER_URL` in den Release-Text: wer die APK installiert, muss nachlesen koennen,
+welchem Server sie ohne Rueckfrage vertraut - von aussen ist das einer APK nicht anzusehen
+(Threat Model 4.20). Steht dort keine Adresse, ist der Build ohne Anker gebaut, und die Adresse
+wird auf dem Geraet eingetippt.
 
 ## Architektur und Schutz
 
@@ -83,7 +132,9 @@ aus dem die Datei `Feedback.apk` direkt auf dem Handy geladen werden kann.
   solange keine ProGuard-Regeln gegen Reflexion in Compose und OkHttp erprobt sind: eine
   Minifizierung, die etwas wegoptimiert, faellt erst auf dem Geraet auf.
 - Ohne hinterlegte Secrets ist die Signatur zwischen Builds **nicht stabil**.
-  Das ist dokumentiert, aber nicht geloest - es braucht die einmalige Einrichtung oben.
+  Das ist dokumentiert, aber nicht geloest - es braucht die einmalige Einrichtung oben. Seit den
+  Einrichtungslinks faellt damit zusaetzlich die Domainverifikation aus: `assetlinks.json` kann
+  genau einen Fingerabdruck nennen, und der stimmt dann nur bis zum naechsten Build.
 - Es gibt noch keine Versionspflege im Releasetext: `versionCode`/`versionName`
   muessen vor einem Release von Hand erhoeht werden.
 - Kein Play-Store-Weg, keine automatische Update-Pruefung in der App.
@@ -99,3 +150,6 @@ aus dem die Datei `Feedback.apk` direkt auf dem Handy geladen werden kann.
   wurde bewusst **nicht** uebernommen.
 - Offen: erster echter Lauf, Fingerabdruckvergleich ueber zwei Builds,
   Update-Test ueber eine installierte Vorversion.
+- Ebenfalls offen: ob Android die Domain ueberhaupt verifiziert. Das braucht eine erreichbare
+  Domain, eine mit festem Schluessel signierte APK und ein Geraet - bis dahin ist der
+  Einrichtungslink eine Zusage, keine gepruefte Eigenschaft (`BETRIEB.md` 3.6).

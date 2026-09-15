@@ -14,6 +14,13 @@ import {
   type Crumb,
 } from './files.ts';
 import {
+  decideQrCode,
+  qrRefusalCopy,
+  setupSteps,
+  type QrRefusalCopy,
+} from './onboarding.ts';
+import { qrSvgElement } from './qr.ts';
+import {
   hasVideoDecoder,
   statusLine,
   stopReasonLine,
@@ -157,7 +164,7 @@ class ControlCenterApp {
 
     const sidebar = document.createElement('aside');
     sidebar.className = 'sidebar';
-    sidebar.append(this.pairingView(), this.deviceListView());
+    sidebar.append(this.addDeviceView(), this.pairingView(), this.deviceListView());
 
     const content = document.createElement('section');
     content.className = 'content';
@@ -191,6 +198,61 @@ class ControlCenterApp {
 
     header.append(brand, account);
     return header;
+  }
+
+  /**
+   * How a further device joins without anyone typing an address.
+   *
+   * The scanner is deliberately the phone's own camera app and not one inside Feedback.
+   * The system camera is the surface on which the owner already sees and decides what
+   * is being pointed at, and a scanner of our own would cost a camera permission for a
+   * job the operating system already does.
+   */
+  private addDeviceView(): HTMLElement {
+    const section = card('Neues Gerät hinzufügen', 'Kopplung ohne Tippen');
+    const decision = decideQrCode(window.location);
+
+    /*
+     * The scheme and the host are shown apart, because only one of them is worth reading. The
+     * scheme is always https - the app refuses anything else - while the host is what tells the
+     * owner whether this is their server. Put together in one line they are long enough to wrap
+     * mid-name in the sidebar, and `feedback.example.c / om` is the shape in which a wrong name
+     * goes unnoticed.
+     */
+    const address = div('server-address');
+    address.append(
+      text('span', 'Adresse dieses Servers', 'field-label'),
+      text('span', `${window.location.protocol}//`, 'address-scheme mono'),
+      text('strong', window.location.host, 'address-value mono wrap'),
+    );
+    section.body.append(address);
+
+    section.body.append(
+      decision.kind === 'show'
+        ? this.qrCodeView(decision.url)
+        : noticeBlock(qrRefusalCopy(decision.reason)),
+    );
+    section.body.append(stepList(setupSteps(decision)));
+    return section.root;
+  }
+
+  private qrCodeView(url: string): HTMLElement {
+    const frame = div('qr-frame');
+    try {
+      const code = qrSvgElement(url, url);
+      code.classList.add('qr-code');
+      frame.append(code);
+    } catch (error) {
+      // An empty box where the code belongs would be the silent break constitution 12
+      // rules out, so the failure is named and the manual way stated.
+      return noticeBlock({
+        headline: 'QR-Code konnte nicht erzeugt werden',
+        reason: this.errorMessage(error),
+        remedy: `Trage die Adresse am Gerät von Hand ein und öffne ${url} im Browser des Geräts.`,
+      });
+    }
+    frame.append(text('span', url, 'muted small mono wrap'));
+    return frame;
   }
 
   private pairingView(): HTMLElement {
@@ -1504,6 +1566,26 @@ function messageBanner(
     banner.append(dismiss);
   }
   return banner;
+}
+
+/** A short block that says what is not possible here, why, and what to do instead. */
+function noticeBlock(copy: QrRefusalCopy): HTMLElement {
+  const notice = div('notice');
+  notice.append(
+    text('strong', copy.headline),
+    text('p', copy.reason, 'muted small'),
+    text('p', copy.remedy, 'muted small'),
+  );
+  return notice;
+}
+
+function stepList(steps: readonly string[]): HTMLElement {
+  const list = document.createElement('ol');
+  list.className = 'steps';
+  for (const step of steps) {
+    list.append(text('li', step, 'small'));
+  }
+  return list;
 }
 
 function pill(label: string, tone: 'good' | 'bad' | 'neutral'): HTMLElement {

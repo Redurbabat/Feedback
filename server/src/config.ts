@@ -35,6 +35,36 @@ const originSchema = z
     }
   }, 'muss eine Origin der Form https://host[:port] sein');
 
+/**
+ * SHA-256 fingerprint of the Android signing certificate, in exactly the notation Google's
+ * Digital Asset Links verifier expects: 32 uppercase hex pairs joined by colons.
+ *
+ * Strict on purpose, because a typo here has nowhere else to surface. The file would still be
+ * served, Android would still fetch it, and the verification would simply not match - no request
+ * fails, no log line appears, the App Link just stays unverified and the setup link opens a
+ * browser page forever. Refusing to start is the only feedback that reaches a human.
+ */
+const androidCertSha256Schema = z
+  .string()
+  .trim()
+  .regex(
+    /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/,
+    'muss aus 32 Hex-Paaren in Grossbuchstaben bestehen, durch Doppelpunkte getrennt ' +
+      '(die Ausgabe von keytool -list -v)',
+  );
+
+/**
+ * Android application id. Not a free text field: together with the fingerprint it is the whole
+ * claim the asset link file makes, so a value that Android cannot read is a claim nobody verifies.
+ */
+const androidPackageSchema = z
+  .string()
+  .trim()
+  .regex(
+    /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/,
+    'muss ein Android-Paketname sein, z. B. com.beispiel.app',
+  );
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   FEEDBACK_HOST: z.string().min(1).default('127.0.0.1'),
@@ -84,6 +114,15 @@ const envSchema = z.object({
     .default('info'),
   FEEDBACK_BOOTSTRAP_EMAIL: z.string().email().optional(),
   FEEDBACK_BOOTSTRAP_PASSWORD: z.string().min(12).optional(),
+  /**
+   * Optional: fingerprint of the Android signing key this deployment vouches for.
+   *
+   * Set it and `/.well-known/assetlinks.json` is served, which is what lets the setup link open
+   * the app instead of a browser page. Unset and that path answers 404 - a deployment that
+   * cannot name a key makes no claim about one.
+   */
+  FEEDBACK_ANDROID_CERT_SHA256: androidCertSha256Schema.optional(),
+  FEEDBACK_ANDROID_PACKAGE: androidPackageSchema.default('com.redurbabat.feedback'),
 });
 
 export interface AppConfig {
@@ -103,6 +142,21 @@ export interface AppConfig {
   readonly bootstrap:
     | { readonly email: string; readonly password: string }
     | undefined;
+  /**
+   * The Android app this deployment vouches for in `/.well-known/assetlinks.json`.
+   *
+   * `certSha256` is one value and not a list, although the file format allows several. A list
+   * invites appending on a key rotation, and an appended old fingerprint leaves a key that may
+   * be lost, leaked or simply forgotten with a verified claim on this domain - every device that
+   * installs an app signed with it treats that app as this server's app. Replacing the single
+   * configured value is the only way to rotate, and that is the point.
+   *
+   * `undefined` means no claim is published at all.
+   */
+  readonly android: {
+    readonly packageName: string;
+    readonly certSha256: string | undefined;
+  };
 }
 
 export class ConfigError extends Error {
@@ -192,5 +246,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       bootstrapEmail !== undefined && bootstrapPassword !== undefined
         ? { email: bootstrapEmail, password: bootstrapPassword }
         : undefined,
+    android: {
+      packageName: value.FEEDBACK_ANDROID_PACKAGE,
+      certSha256: value.FEEDBACK_ANDROID_CERT_SHA256,
+    },
   };
 }

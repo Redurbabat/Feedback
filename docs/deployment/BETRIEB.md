@@ -1,6 +1,6 @@
 # Betrieb und erster echter Test
 
-Stand: 2026-09-13
+Stand: 2026-09-15
 
 Diese Datei beantwortet eine Frage: **ab wann kann man nachsehen, ob Feedback wirklich
 funktioniert - mit einem echten Handy?**
@@ -51,7 +51,7 @@ Fuenf Wege nach draussen. Was sie unterscheidet:
 | 3.2 eigener Host | fest | Domain + Server | beim Anbieter | der Anbieter (4.15) |
 
 **Was eine eigene Domain bringt.** Keine Capability und keine zusaetzliche Sicherheit - die App
-kann mit `*.ts.net` genau dasselbe. Sie kauft zwei andere Dinge:
+kann mit `*.ts.net` genau dasselbe. Sie kauft drei andere Dinge:
 
 - **Die feste Adresse aus 3.1.1.** Ohne sie muss nach jedem Serverstart jedes Geraet neu gekoppelt
   werden.
@@ -60,6 +60,9 @@ kann mit `*.ts.net` genau dasselbe. Sie kauft zwei andere Dinge:
   Registrierung auf dem Geraet an der Adresse haengt, muss **jedes gekoppelte Geraet neu
   gekoppelt werden**. Eine eigene Domain zeigt stattdessen einfach woanders hin, und die Geraete
   merken nichts davon.
+- **Die Kopplung ohne Tippen aus 3.6.** Auch das ist Komfort und keine Sicherheit: der Link
+  erspart das Abtippen der Adresse, mehr nicht. Er bringt dafuer eine Betriebspflicht mit, die es
+  ohne ihn nicht gibt - die Domain muss gehalten werden (3.6, Threat Model 4.21).
 
 Die feste Adresse allein gibt es in 3.1.3 auch umsonst. Wer nie wechseln will, braucht keine
 Domain.
@@ -344,14 +347,96 @@ Der Teil mit den meisten ungepruefeten Annahmen. Schritte 1 bis 4 aus 3.4 muesse
 11. Zehn Minuten laufen lassen. Nach `SCREEN_SESSION_TTL_MS` muss Schluss sein, und ein neuer
     Blick muss beide Zustimmungen erneut verlangen.
 
+### 3.6 Kopplung ohne Tippen
+
+Bis hierher wird die Serveradresse auf jedem Geraet abgetippt (3.4, Schritt 2). Mit einer eigenen
+Domain geht es ohne: der Besitzer oeffnet auf dem Geraet `https://<deine-domain>/pair`, die App
+faengt den Link ab und traegt die Adresse ein. **Die Kopplung startet danach weiterhin der
+Besitzer** - der Link fuellt ein Feld aus, mehr nicht.
+
+Was der Link *nicht* kann, gehoert zum Verstaendnis dazu: er bringt der App keinen Server bei. Die
+App uebernimmt eine Adresse aus einem Link nur, wenn sie zeichengleich ist mit der beim Build
+eingebauten oder mit der, mit der sie bereits gekoppelt ist. Jede andere Adresse wird abgelehnt und
+die Ablehnung angezeigt (Threat Model 4.20). Ein Link an ein Geraet, dessen App Ihren Server nicht
+ohnehin kennt, richtet deshalb nichts aus.
+
+**Zwei Einstellungen, die zusammengehoeren.**
+
+| Wo | Schluessel | Wert |
+| --- | --- | --- |
+| GitHub → Settings → Secrets and variables → Actions → **Variables** | `FEEDBACK_SERVER_URL` | `https://<deine-domain>` - genau die Origin, kein Pfad, kein abschliessender Schraegstrich |
+| Server-`.env` | `FEEDBACK_ANDROID_CERT_SHA256` | die `SHA256:`-Zeile aus `keytool -list -v -keystore <datei> -alias <alias>`: 32 Hex-Paare in Grossbuchstaben, durch Doppelpunkte getrennt |
+| Server-`.env`, nur bei abweichender Anwendungs-ID | `FEEDBACK_ANDROID_PACKAGE` | Standard ist `com.redurbabat.feedback` |
+
+`FEEDBACK_SERVER_URL` ist bewusst eine **Variable und kein Secret**: der Hostname steht im Manifest
+jeder veroeffentlichten APK und in der `assetlinks.json` des Servers, er ist also ohnehin
+oeffentlich. Er gehoert trotzdem nicht ins Repository, weil er zur Installation des Besitzers
+gehoert und nicht zum Quelltext. Ist die Variable nicht gesetzt, baut die App ohne festen Anker:
+die Adresse wird eingetippt wie bisher, und **jeder** Einrichtungslink wird abgelehnt - es gibt
+dann nichts, womit er uebereinstimmen koennte.
+
+Die beiden Werte ergeben nur zusammen etwas. Die APK beansprucht den Host aus
+`FEEDBACK_SERVER_URL`, der Server bestaetigt unter `/.well-known/assetlinks.json` den
+Signaturschluessel genau dieser APK, und Android glaubt den Link erst, wenn beide Seiten dasselbe
+sagen. Ein Tippfehler auf der Serverseite bricht den Start ab; ein Tippfehler auf der Buildseite
+bricht den Build ab. Was keine Fehlermeldung erzeugt, ist die Kombination aus zwei je fuer sich
+gueltigen, aber nicht zueinander passenden Werten - dann bleibt der Link einfach unverifiziert.
+Nachsehen laesst sich das von aussen:
+
+```bash
+curl -sS -i https://<deine-domain>/.well-known/assetlinks.json
+```
+
+Kommt `404`, ist `FEEDBACK_ANDROID_CERT_SHA256` nicht gesetzt. Kommt JSON mit einem anderen
+Fingerabdruck als dem der ausgelieferten APK, passen die Seiten nicht zueinander. Fehlt eine Seite,
+passiert nichts Schlimmes: der Link oeffnet die Seite `/pair` im Browser, und die Adresse wird
+eingetippt wie vorher.
+
+**Ein Port in der Serveradresse macht App Links unmoeglich.** Die Verifikation holt
+`https://<host>/.well-known/assetlinks.json` immer ueber Port 443. Eine Adresse wie
+`https://feedback.example.com:8443` ist dort nicht erreichbar, der Link wird nie verifiziert - und
+ein beanspruchter, aber unverifizierter Link ist schlechter als keiner, weil Android dann den
+Auswahldialog zeigt. Der Android-Build warnt deshalb bei einem Port im Wert und beansprucht gar
+keinen Host. Wer einen Port braucht, behaelt das Eintippen; alles andere funktioniert unveraendert.
+
+**Betriebspflicht: die Domain halten.** Die Domain ist hier kein Komfort, sondern der Anker. Der
+Fingerabdruck in `assetlinks.json` ist oeffentlich und aus jeder Kopie der APK berechenbar - wer
+die Domain spaeter uebernimmt, legt dieselbe Datei ab und ist fuer neu installierte Geraete das
+verifizierte Ziel (Threat Model 4.21). Daraus folgen zwei Pflichten:
+
+1. **Halten.** Verlaengerung automatisch, Kontaktadresse beim Registrar erreichbar, Ablaufdatum
+   notiert. Eine abgelaufene Domain ist hier kein Ausfall, sondern eine Uebergabe.
+2. **Bei Verlust: widerrufen und neu ausliefern.** Alle Geraete im Control Center widerrufen, dann
+   einen Build mit neuer Adresse ausliefern und die Geraete neu koppeln. Eine bestehende
+   Registrierung hilft dabei **nicht**: sie haengt an der Adresse, und hinter der Adresse steht
+   dann jemand anderes. Der Widerruf ist der einzige Schritt, der ein gekoppeltes Geraet von ihr
+   loest.
+
+**Widerrufspfad: die Host-Bindung wieder loesen.** `CLAUDE.md` verlangt fuer jede Funktion einen
+Widerrufspfad; hier ist er, und er hat drei voneinander unabhaengige Schalter:
+
+- **In Android, pro Geraet.** App-Info → *Standardmaessig oeffnen* → unterstuetzte Links
+  abschalten bzw. *Standardeinstellungen loeschen*. Danach oeffnet `https://<deine-domain>/pair`
+  wieder den Browser, und die App reagiert nicht mehr darauf. Die Beschriftung unterscheidet sich
+  je nach Android-Version und Hersteller; der Ort ist immer die App-Info.
+- **In Feedback selbst.** Einrichtungslinks lassen sich in der App dauerhaft abschalten. Danach
+  wird auch ein zeichengleicher Link nicht mehr uebernommen, und kein Link kann die Einstellung
+  wieder einschalten.
+- **Im Build.** Eine APK ohne `FEEDBACK_SERVER_URL` beansprucht ueberhaupt keinen Host und lehnt
+  jeden Link ab.
+
+Keiner der drei Schalter beruehrt eine bestehende Kopplung: sie schalten nur ab, wie die Adresse
+auf das Geraet kommt.
+
 ## 4. Ehrliche Grenzen / offen
 
 - **Presence und Rate Limits liegen im Arbeitsspeicher.** Der Server ist damit
   Single-Instance. Zwei Instanzen hinter einem Load Balancer wuerden sich gegenseitig nicht
   kennen. Fuer einen Test mit eigenen Geraeten ist das unerheblich, fuer echten Betrieb nicht.
 - **SQLite als Ablage.** Produktionsziel ist PostgreSQL hinter derselben Repository-Schicht.
-- **Kein Container, kein Deployment-Skript, kein Healthcheck-Endpunkt.** Der Betrieb ist
-  handgemacht.
+- **Kein Container und kein Deployment-Skript.** Der Betrieb ist handgemacht. Einen
+  unauthentifizierten `GET /health` gibt es, aber nichts fragt ihn ab - und wer ihn abfragt,
+  erkennt damit eine Feedback-Installation (Threat Model 4.21).
 - **Keine Backup-Strategie.** Die SQLite-Datei enthaelt Benutzer, Geraete und Audit-Eintraege.
 - **Kein Monitoring.** Ein abgestuerzter Prozess faellt dadurch auf, dass Geraete offline gehen.
 - Ein Tunnel-Hostname wechselt je nach Dienst bei jedem Start. Aendert sich die Server-URL,
@@ -369,6 +454,9 @@ Der Teil mit den meisten ungepruefeten Annahmen. Schritte 1 bis 4 aus 3.4 muesse
 - Es gab noch keinen Pairing-Durchlauf mit einem Handy.
 - Der Release-Workflow ist nie gelaufen (er loest erst auf `main` aus).
 - Kein Schritt aus Abschnitt 3.4 oder 3.5 wurde durchgefuehrt.
+- Kein Einrichtungslink wurde je auf einem Geraet geoeffnet. Ob Android die Domain verifiziert und
+  ob der Link die App statt des Browsers oeffnet, zeigt erst ein Geraet mit installierter,
+  fest signierter APK (3.6).
 - Von der Bildschirmuebertragung ist auf echter Hardware **nichts** geprueft: weder die beiden
   Dialoge, noch die Benachrichtigung, noch der Stop, noch der Encoder.
 

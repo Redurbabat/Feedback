@@ -1,10 +1,14 @@
 # Threat Model
 
-Stand: 2026-09-13. Gilt fuer Protokoll v1 mit den vier implementierten Lesefaehigkeiten
+Stand: 2026-09-15. Gilt fuer Protokoll v1 mit den vier implementierten Lesefaehigkeiten
 `system.info`, `files.read`, `media.photos.read` und `media.videos.read` sowie fuer
 `screen.view`, das in Protokoll-Abschnitt 8.5 festgelegt und derzeit in Umsetzung ist.
 Bedrohungen 4.15 bis 4.18 beschreiben `screen.view`; sie stehen hier, bevor der Code steht,
 weil Konstitution Punkt 5 genau diese Reihenfolge verlangt.
+
+4.20 und 4.21 kamen mit den Einrichtungslinks dazu. Sie beschreiben keine neue Capability und
+keine neue Nachricht, sondern den Weg, auf dem die Serveradresse auf das Geraet kommt - und was
+daran haengt, dass diese Adresse stimmt.
 
 Diese Datei beschreibt, wogegen Feedback schuetzt, wogegen ausdruecklich **nicht**, und was
 nach allen Massnahmen an Risiko uebrig bleibt. Ein Threat Model, das nur Erfolge auflistet,
@@ -170,10 +174,19 @@ Root-Erkennung waere ein Signal, keine Grenze, und wird nicht als Sicherheitsmer
 **Mitigation** Android laesst ein Update nur mit derselben Signatur zu. Der Signaturschluessel
 liegt ausschliesslich im GitHub Secret Store, nie im Repository, und der Fingerabdruck wird im
 Build protokolliert, damit ein unbeabsichtigter Wechsel auffaellt.
+Dieser Abschnitt behandelt bisher nur den Signaturpfad, also die manipulierte APK. Seit es einen
+eingebauten Vertrauensanker gibt, hat er eine zweite Seite: eine APK, die **nicht** manipuliert,
+sondern schlicht mit einem anderen `FEEDBACK_SERVER_URL` gebaut wurde, ist von aussen von der
+echten nicht zu unterscheiden. Gleicher Name, gleiches Symbol, gleicher Quelltext - nur ihr
+eingebauter Default zeigt woanders hin, und genau dieser Default entscheidet, welchen
+Einrichtungslink sie annimmt (4.20). Unterscheidbar werden die beiden allein ueber die Signatur,
+und die unterscheidet nur dann etwas, wenn sie zwischen Builds gleich bleibt.
+
 **Residual** Wer eine fremd signierte APK **neu** installiert, hat eine andere App - mit einer
 anderen Identitaet und ohne Kopplung. Solange kein fester Schluessel hinterlegt ist, wechselt die
 Signatur zwischen Builds, was Nutzer an Deinstallieren gewoehnt - und genau diese Gewohnheit ist
-der Angriffsweg. Deshalb steht das Einrichten des Schluessels in `ANDROID_RELEASE.md` so weit oben.
+der Angriffsweg. Deshalb steht das Einrichten des Schluessels in `ANDROID_RELEASE.md` so weit oben,
+und deshalb ist es dort seit den Einrichtungslinks keine Empfehlung mehr, sondern Voraussetzung.
 
 ### 4.11 Session Replay auf der Protokollstrecke
 
@@ -337,6 +350,90 @@ Moeglichkeiten wie in 4.15 - anders als dort ist es aber eine freie Wahl. Deshal
 ist eine Vertrauensentscheidung des Besitzers. Technisch aufloesen laesst sich auch das nur mit
 Punkt 6 aus Abschnitt 6.
 
+Mit den Einrichtungslinks kommt ein weiterer Dritter hinzu. Er sieht keine Inhalte, aber er ist
+beteiligt: die Verifikation der App Links laeuft ab Android 12 nicht auf dem Geraet des Besitzers,
+sondern ueber den Domain-Verification-Agent der Play-Dienste. Ein Dokument, das hier jeden
+zusaetzlichen Mitleser benennt, benennt auch ihn - die Einzelheiten stehen in 4.21.
+
+### 4.20 Untergeschobene Server-Adresse
+
+**Impact** hoch: das Geraet koppelt mit einem fremden Control Server. Wer ihn betreibt, ist der
+Betreiber aus 4.6 - mit allem, was dort steht, nur ohne dass der Besitzer ihn gewaehlt haette.
+**Likelihood** mittel, und sie steigt mit dem Komfort. Eine Adresse, die abgetippt werden muss,
+wird dabei gelesen; eine, die ein Link mitbringt, nicht.
+**Mitigation** Eine Regel traegt das hier, und sie ist bewusst die einfachste, die reicht: **ein
+Einrichtungslink fuehrt nie einen Server ein, er bestaetigt nur einen.** Eine Origin aus einem Link
+wird genau dann uebernommen, wenn sie zeichengleich ist mit dem eingebauten Default
+(`BuildConfig.DEFAULT_SERVER_URL`) oder mit der Origin der bereits gespeicherten Registrierung.
+Verglichen wird immer die vollstaendige normalisierte Origin - Schema, Host **und** Port -, nie
+nur der Host: `https://feedback.example.com` und `https://feedback.example.com:8443` sind
+verschiedene Server, und `feedback.example.com.angreifer.example` ist ein dritter.
+
+Warum Gleichheit und nicht Herkunft: ein Link ist eine Zeichenkette ohne jede Bindung an den
+Ueberbringer. Ein praeparierter Link in einer Nachricht, ein expliziter Intent einer fremden App
+an die exportierte Einstiegs-Activity, ein ueberklebter QR-Code auf einem Ausdruck - alle drei
+kommen als derselbe Eingabewert an, und keine Pruefung, woher er "stammt", trennt sie
+voneinander. An der Gleichheitsregel scheitern alle drei an derselben Stelle. Der Vertrauensanker
+ist der Build, nicht der Link.
+
+Dazu, aus dem uebrigen Modell unveraendert: `ServerEndpoint.parse` laesst keine Adressliterale zu
+(4.4), die Kopplung startet immer der Besitzer - ein bestaetigter Link fuellt hoechstens das
+Adressfeld aus und drueckt keinen Knopf -, und ein Link, der bei gesperrter App ankommt, aendert
+nichts, sondern wartet auf das Entsperren. Eine abgelehnte Adresse wird dem Besitzer als Ablehnung
+gezeigt und nennt beide Seiten; eine stille Ablehnung waere keine. Wer Einrichtungslinks gar nicht
+will, schaltet sie dauerhaft ab, und kein Link kann sie wieder einschalten.
+
+**Residual** **Damit ist 4.20 nur halb gemildert.** Wer eine APK verteilt, die mit einem fremden
+`FEEDBACK_SERVER_URL` gebaut wurde, umgeht die Regel vollstaendig: dort *ist* der fremde Server der
+eingebaute Default, und die Gleichheitsregel bestaetigt ihn bereitwillig. Dagegen hilft keine Regel
+in der App, sondern nur nachpruefbare Herkunft der APK - also 4.10 und ein stabiler
+Signaturschluessel. Solange die Signatur zwischen Builds wechselt, gibt es diese Nachpruefbarkeit
+nicht, und dann traegt die andere Haelfte niemand.
+
+### 4.21 Verlust der Domain bei verifizierten App Links
+
+**Impact** hoch, aber mit Verzoegerung. **Likelihood** niedrig. **Eintritt nicht erkennbar** - auf
+dem Geraet sieht das Ergebnis genauso aus wie vorher, weil es dasselbe ist: ein Link auf die
+gewohnte Domain, der die App oeffnet.
+**Mitigation** Kaum eine technische. `/.well-known/assetlinks.json` nennt den SHA-256 des
+Signaturzertifikats, und dieser Fingerabdruck ist kein Geheimnis: er steht in jeder Kopie der
+veroeffentlichten APK und laesst sich daraus ausrechnen. Wer die Domain spaeter uebernimmt - sie
+laeuft ab, wird verkauft, ein Konto wird gekuendigt -, legt dieselbe Datei mit demselben
+Fingerabdruck ab und ist von da an das verifizierte Ziel fuer `https://<domain>/pair` auf jedem
+Geraet, das die Verifikation neu durchlaufen laesst.
+
+Was geschuetzt bleibt, ist eine **bestehende** Registrierung gegen den *Link*: ihre
+Endpunkt-Adresse liegt Keystore-versiegelt neben dem Geraeteschluessel, und kein Link kann sie
+umbiegen - er bestaetigt dort hoechstens, was ohnehin gilt. Gegen den Domainwechsel selbst
+schuetzt das nicht: das Geraet spricht weiter mit *der Adresse*, und hinter der Adresse steht dann
+der neue Inhaber, dem der Agent im Handshake seinen `deviceToken` reicht. Nicht geschuetzt ist
+ausserdem jede **Neu**kopplung: ein frisch installiertes Geraet hat als Anker allein den
+eingebauten Default, und der zeigt auf genau die verlorene Domain.
+
+Bleibt der betriebliche Weg, und der steht in `BETRIEB.md` 3.6: die Domain halten, und bei Verlust
+alle Geraete widerrufen und einen Build mit neuer Adresse ausliefern. Der Widerruf ist dabei nicht
+die Kuer - er ist der einzige Schritt, der ein bereits gekoppeltes Geraet von der Adresse loest.
+
+**Residual** Vollstaendig, solange die Server-Identitaet nicht an einen beim Pairing gesehenen
+Schluessel gebunden ist. Das ist **Abschnitt 6 Punkt 5**, und die Einrichtungslinks machen diesen
+offenen Punkt dringlicher: bis dahin war die Serveradresse etwas, das der Besitzer bei jeder
+Kopplung selbst eintippte, und ein Vertippen fiel ihm auf. Jetzt bringt sie der Build mit, und ein
+Geraet, das nie eine falsche Adresse zu sehen bekommt, kann auch keine bemerken.
+
+Zwei Nebenwirkungen, die nicht als Feature durchgehen duerfen:
+
+- **Ein Dritter verifiziert.** `autoVerify` laeuft ab Android 12 ueber den
+  Domain-Verification-Agent der Play-Dienste. Die `assetlinks.json` wird also nicht vom Geraet des
+  Besitzers geholt, und der Host muss dafuer oeffentlich und ohne Authentisierung ueber Port 443
+  erreichbar sein. Dieser Dritte sieht keine Inhalte, aber er entscheidet, ob ein Link die App
+  oeffnet - deshalb steht er neben den Beteiligten aus 4.19.
+- **Ein Konfigurations-Orakel.** `/.well-known/assetlinks.json` antwortet 404 oder 200 und sagt
+  damit jedem, der fragt, ob diese Installation ein Android-Geraet erwartet. Zusammen mit dem
+  unauthentifizierten `/health` ist jede Feedback-Installation im Internet als solche erkennbar.
+  Es leakt dabei kein Geheimnis - der Fingerabdruck ist per Definition oeffentlich, und beide
+  Antworten sagen nichts ueber den Kopplungszustand -, aber wer nach Feedback-Servern sucht,
+  findet sie, und das gehoert hingeschrieben statt beschwiegen.
+
 ## 5. Wiederkehrende Muster
 
 Drei Entscheidungen tauchen in fast jeder Zeile oben auf:
@@ -356,7 +453,12 @@ Ungeloest, nach Nutzen sortiert:
 2. **Keine zweite Stufe im Control Center** vor dem Erteilen einer Capability (4.5).
 3. **Keine Rotation des `deviceToken`** (4.13).
 4. **Rate Limits und Presence nur im Prozessspeicher** (4.14).
-5. Kein Pinning der Server-Identitaet an den beim Pairing gesehenen Schluessel (TOFU waere moeglich).
+5. **Kein Pinning der Server-Identitaet** an den beim Pairing gesehenen Schluessel (TOFU waere
+   moeglich). Mit den Einrichtungslinks ist dieser Punkt **dringlicher** geworden: er ist der
+   einzige, der 4.20 und 4.21 zugleich schliessen wuerde. Solange die Server-Identitaet eine
+   Adresse ist, erbt jeder ihr Vertrauen, der diese Adresse bekommt - der Angreifer, der sie
+   unterschiebt, und der naechste Inhaber der Domain. Ein beim Pairing gesehener Schluessel ist
+   nicht uebertragbar.
 6. **Keine Ende-zu-Ende-Verschluesselung der Inhalte** gegenueber dem Serverbetreiber und gegen
    einen TLS-beendenden Tunnel - weder fuer Dateien noch fuer Bildframes (4.15, 4.19). Das ist
    der groesste offene Punkt der Liste und der einzige, dessen Loesung neue Kryptografie braucht

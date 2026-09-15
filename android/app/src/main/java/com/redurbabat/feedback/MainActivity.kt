@@ -1,10 +1,12 @@
 package com.redurbabat.feedback
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.fragment.app.FragmentActivity
+import com.redurbabat.feedback.pairing.SetupLinkActivity
 import com.redurbabat.feedback.ui.AndroidBiometricGateway
 import com.redurbabat.feedback.ui.FeedbackApp
 import com.redurbabat.feedback.ui.FeedbackController
@@ -39,10 +41,36 @@ class MainActivity : FragmentActivity() {
         controller = FeedbackController(applicationContext)
         val biometricGateway = AndroidBiometricGateway(this)
         controller.setBiometricUnlockAvailable(biometricGateway.isAvailable())
+        consumeSetupLink(intent)
 
         setContent {
             FeedbackApp(controller = controller, biometricGateway = biometricGateway)
         }
+    }
+
+    /**
+     * How a setup link reaches the running controller: SetupLinkActivity starts this activity with
+     * CLEAR_TOP and SINGLE_TOP, so an existing instance is reused and gets the intent here instead
+     * of a second instance - and a second instance would mean a second FeedbackController whose
+     * agent stops this one's.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        consumeSetupLink(intent)
+    }
+
+    /**
+     * Read once and removed, so that a recreation for a rotation or a theme change does not offer
+     * the same link a second time.
+     */
+    private fun consumeSetupLink(source: Intent?) {
+        if (source == null || !::controller.isInitialized) {
+            return
+        }
+        val offeredServer = source.getStringExtra(SetupLinkActivity.EXTRA_OFFERED_SERVER) ?: return
+        source.removeExtra(SetupLinkActivity.EXTRA_OFFERED_SERVER)
+        controller.applySetupLink(offeredServer)
     }
 
     /**

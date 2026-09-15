@@ -178,6 +178,7 @@ fun FeedbackApp(
                     onRemoveFileShare = controller::removeFileShare,
                     onForgetUnavailableFileShares = controller::forgetUnavailableFileShares,
                     onBackgroundConnectionChanged = onBackgroundConnectionChanged,
+                    onSetupLinksIgnoredChanged = controller::setSetupLinksIgnored,
                     onReconnect = controller::reconnectAgent,
                     onForgetLocalRegistration = controller::forgetLocalRegistration,
                     onClearMessage = controller::clearMessage,
@@ -217,6 +218,7 @@ private fun HomeScreen(
     onRemoveFileShare: (String) -> Unit,
     onForgetUnavailableFileShares: () -> Unit,
     onBackgroundConnectionChanged: (Boolean) -> Unit,
+    onSetupLinksIgnoredChanged: (Boolean) -> Unit,
     onReconnect: () -> Unit,
     onForgetLocalRegistration: () -> Unit,
     onClearMessage: () -> Unit,
@@ -294,6 +296,10 @@ private fun HomeScreen(
                 onBiometricUnlockChanged = onBiometricUnlockChanged,
                 onDisableAppLock = onDisableAppLock,
             )
+            SetupLinkCard(
+                ignored = state.setupLinksIgnored,
+                onIgnoredChanged = onSetupLinksIgnoredChanged,
+            )
             SecurityCard()
             LocalRemovalCard(onForgetLocalRegistration = onForgetLocalRegistration)
         } else {
@@ -311,6 +317,10 @@ private fun HomeScreen(
                 onAutoLockTimeoutChanged = onAutoLockTimeoutChanged,
                 onBiometricUnlockChanged = onBiometricUnlockChanged,
                 onDisableAppLock = onDisableAppLock,
+            )
+            SetupLinkCard(
+                ignored = state.setupLinksIgnored,
+                onIgnoredChanged = onSetupLinksIgnoredChanged,
             )
             SecurityCard()
         }
@@ -393,6 +403,29 @@ private fun PairingCard(
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
+
+            // The name, not just a filled-in field: the owner should be able to read which server
+            // this build belongs to and compare it with what they expect.
+            state.buildServerAuthority?.let { authority ->
+                Text(
+                    text = "Diese App ist für $authority gebaut. Ein Einrichtungslink kann nur " +
+                        "diese Adresse bestätigen, keine andere einführen.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            state.setupLinkNotice?.let { notice ->
+                Text(
+                    text = notice,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (state.setupLinkRejected) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                )
+            }
 
             OutlinedTextField(
                 value = state.serverUrl,
@@ -533,6 +566,53 @@ private fun PairedConnectionCard(
                     Text("Erneut verbinden")
                 }
             }
+        }
+    }
+}
+
+/**
+ * The revocation path for setup links. Off means a tapped link is refused before it is even looked
+ * at; the address is then typed, exactly as before this feature existed.
+ */
+@Composable
+private fun SetupLinkCard(
+    ignored: Boolean,
+    onIgnoredChanged: (Boolean) -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(20.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f).padding(end = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                Text(
+                    text = "Einrichtungslinks ignorieren",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = if (ignored) {
+                        "An. Getippte Einrichtungslinks werden abgelehnt. Die Serveradresse gibst du selbst ein."
+                    } else {
+                        "Aus. Ein Einrichtungslink darf die Serveradresse vorschlagen - aber nur, wenn sie mit der übereinstimmt, für die diese App gebaut ist oder mit der sie bereits gekoppelt ist. Eine Kopplung startet ein Link nie."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = ignored,
+                onCheckedChange = onIgnoredChanged,
+            )
         }
     }
 }

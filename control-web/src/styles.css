@@ -648,3 +648,69 @@ input:focus {
   align-items: center;
   gap: 8px;
 }
+
+/*
+ * "Neues Gerät hinzufügen".
+ *
+ * The symbol brings its own light ground, in both themes: a QR code inverted to match
+ * a dark page is one many phone cameras do not see, and this panel is only worth
+ * having if it works on the first try.
+ */
+.server-address {
+  display: grid;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+
+/*
+ * Reading this address is the control the whole panel rests on, so every character of it has to
+ * be on screen. Wrapping mid-name is ugly; hiding the tail is dangerous, because
+ * `feedback.example` and `feedback.example.com.evil.example` look identical once the end is cut
+ * off. A one-line box with overflow was tried and does exactly that. So: smaller type, so a
+ * normal domain fits on one line, and wrapping rather than clipping when it does not.
+ */
+.address-scheme {
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1;
+}
+
+.address-value {
+  font-size: clamp(0.95rem, 2.1vw, 1.25rem);
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.qr-frame {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+}
+
+.qr-code {
+  width: min(100%, 248px);
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.notice {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+
+.steps {
+  margin: 0;
+  padding-left: 22px;
+  display: grid;
+  gap: 9px;
+  color: var(--muted);
+}

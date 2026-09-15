@@ -1,6 +1,6 @@
 # Offene Arbeit
 
-Stand: 2026-09-13, Branch `claude/festive-cori-f6yy5f`.
+Stand: 2026-09-15, Branch `claude/optimistic-edison-mleq4a`.
 
 Diese Datei benennt genau, was **nicht** fertig ist. Sie ist die ehrliche Gegenseite zur
 `ROADMAP.md`: dort steht, was abgehakt ist, hier steht, was noch fehlt und warum.
@@ -225,16 +225,32 @@ Besonders relevant und ungetestet:
 - Foreground Service unter Doze, nach Entfernen aus den Recents, bei Netzwechsel
 - Akkuverbrauch im Leerlauf mit aktiver Hintergrundverbindung
 - Store-/Policy-Pruefung des Foreground-Service-Typs `specialUse`
+- **Einrichtungslinks:** ob Android die Domain ueberhaupt verifiziert (`autoVerify` laeuft ab
+  Android 12 ueber die Play-Dienste), ob der Link die App statt des Browsers oeffnet und ob ein
+  Link bei gesperrter App bis zum Entsperren wartet. Nichts davon ist in CI pruefbar: es braucht
+  eine erreichbare Domain, eine mit festem Schluessel signierte APK und ein Geraet
+  (`docs/deployment/BETRIEB.md` 3.6)
 
 ## 6. Sicherheitsgrenzen, die offen bleiben
 
-Diese sind bewusst so und in `docs/security/SECURITY_MODEL.md` ausfuehrlich benannt:
+Diese sind bewusst so und in `docs/security/SECURITY_MODEL.md` bzw. im Threat Model
+ausfuehrlich benannt:
 
 - Eine vorgestellte Systemuhr kann eine App-Lock-Wartezeit verkuerzen. Ein vertrauenswuerdiger
   lokaler Zeitgeber steht nicht zur Verfuegung.
 - Der Fehlversuchszaehler liegt im privaten App-Speicher und schuetzt nicht gegen Root.
 - Biometrie ist ein Komfort-Gate, kein zweiter kryptografischer Faktor.
 - Ein vollstaendig kompromittiertes Geraet kann die App-Schicht in jedem Fall umgehen.
+- **Die Server-Identitaet haengt an einer Adresse, nicht an einem Schluessel.** Beim Pairing sieht
+  das Geraet den Server nur durch TLS hindurch; es merkt sich seine Adresse, nicht seinen
+  Schluessel. Ein Trust-on-first-use - der beim Pairing gesehene Server-Schluessel wird versiegelt
+  gespeichert und bei jeder spaeteren Verbindung verlangt - ist der einzige Punkt, der
+  Threat Model 4.20 **und** 4.21 zugleich schliessen wuerde: eine untergeschobene Adresse haette
+  dann keinen passenden Schluessel, und ein neuer Domaininhaber erbte die Adresse, aber nicht den
+  Schluessel. Nicht gebaut. Es steht als Punkt 5 in Abschnitt 6 des Threat Models, und die
+  Einrichtungslinks haben es dringlicher gemacht, nicht geloest. Offen ist dabei auch die
+  unbequeme Haelfte: ein absichtlicher Serverumzug muesste dann vom Besitzer bestaetigt werden
+  koennen, sonst waere jeder Umzug ein Neukoppeln aller Geraete.
 
 ## 7. Naechster konkreter Schritt
 

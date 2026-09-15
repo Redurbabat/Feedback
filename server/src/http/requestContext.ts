@@ -21,6 +21,13 @@ declare module 'fastify' {
   interface FastifyContextConfig {
     /** Selects the rate limit bucket of PROTOCOL.md section 11 for the route. */
     rateLimit?: RateLimitName;
+    /**
+     * Marks a publicly advertised route outside `/api/v1` that is rate limited as well.
+     *
+     * Declared on the route instead of matched against the URL in the hook, so a query string,
+     * a trailing slash or a different spelling cannot walk past a string comparison.
+     */
+    publicSetup?: boolean;
   }
 }
 

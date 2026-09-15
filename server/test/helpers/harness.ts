@@ -46,6 +46,9 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     trustProxy: false,
     logLevel: 'silent',
     bootstrap: undefined,
+    // No fingerprint by default: publishing an asset link is a deployment decision, and a test
+    // that silently got one would not notice the difference between "not configured" and "wrong".
+    android: { packageName: 'com.redurbabat.feedback', certSha256: undefined },
     ...overrides,
   };
 }

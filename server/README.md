@@ -17,6 +17,9 @@ Der Feedback-Server ist die Control Plane fuer authentisierte Control-Center-Sit
 - Geraetewiderruf inklusive Token-, Remote-Session- und Capability-Invalidierung
 - Audit-Metadaten
 - Rate Limits und strukturierte, secret-redacted Logs
+- oeffentliche Einrichtungsseite `GET /pair` (ohne Sitzung, ohne Aussage ueber den Kopplungszustand)
+- `GET /.well-known/assetlinks.json` mit genau einem Signatur-Fingerabdruck, nur wenn
+  `FEEDBACK_ANDROID_CERT_SHA256` gesetzt ist
 
 ## Noch offen
 

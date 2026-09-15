@@ -29,6 +29,42 @@
         </activity>
 
         <!--
+          Where a tapped setup link lands. It has no UI, finishes immediately and never sits in
+          recents or in the back stack.
+
+          It is separate from MainActivity so that MainActivity can keep its plain launch mode: a
+          link must reach the running FeedbackController, and a second MainActivity would build a
+          second one whose agent stops the first one's.
+
+          The two <data> paths are exact. pathPrefix would additionally match /pairing and
+          /pair-xyz, which are not setup links.
+
+          android:autoVerify asks Android to check the host's /.well-known/assetlinks.json at
+          install time, so no other app can claim these links. Verification is not what makes the
+          link trustworthy, though: the app accepts an origin from a link only when it already
+          knows it - see SetupLinkPolicy. When FEEDBACK_SERVER_URL is unset or carries a port, the
+          build fills this placeholder with feedback.invalid - a name RFC 2606 reserves, so the
+          filter matches nothing at all.
+        -->
+        <activity
+            android:name=".pairing.SetupLinkActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="${feedbackAppLinkHost}" />
+                <data android:path="/pair" />
+                <data android:path="/pair/" />
+            </intent-filter>
+        </activity>
+
+        <!--
           The owner's first consent (protocol section 8.5.2). Excluded from recents so a finished
           request does not sit in the task switcher, and never exported: nothing outside the app
           may ask for the screen.

@@ -267,6 +267,38 @@ Aufrufe.
 Alle zustandsaendernden Anfragen verlangen den Header `X-Feedback-CSRF` mit dem Wert aus
 `GET /auth/session` und einen gueltigen `Origin`/`Sec-Fetch-Site`-Kontext.
 
+### 6.3 Oeffentliche Einrichtungsseiten (kein Protokollbestandteil)
+
+Zwei GET-Routen liegen ausserhalb von `/api/v1` und ausserhalb dieses Protokolls. Sie stehen hier,
+damit spaeter niemand aus ihnen ein Protokollelement macht.
+
+| Methode | Pfad | Auth | Zweck |
+| --- | --- | --- | --- |
+| `GET` | `/pair`, `/pair/` | keine | HTML-Seite fuer den Fall, dass auf dem Geraet keine App auf den Link reagiert |
+| `GET` | `/.well-known/assetlinks.json` | keine | Digital-Asset-Links-Datei, nur bei konfiguriertem Signatur-Fingerabdruck; sonst `404` |
+
+Beide werden von Hand oder vom Betriebssystem geoeffnet, nicht von einem Client, der dieses
+Protokoll spricht. Beide antworten anonym: keine Sitzung, kein Cookie, und - der Teil, der zaehlt -
+**keine Aussage ueber den Kopplungszustand** dieser Installation. Weder wie viele Geraete
+registriert sind, noch ob gerade eine Kopplung offen ist, noch wem sie gehoert. Die Seite nennt
+allein die Origin, zu der sie gehoert; `assetlinks.json` nennt Paketnamen und genau einen
+Fingerabdruck und wird als `application/json` ausgeliefert, weil dieser Medientyp von aussen
+vorgeschrieben ist.
+
+Ausdruecklich **nicht**:
+
+- **keine neue Wire-Nachricht.** Abschnitt 7.1 bleibt unveraendert.
+- **keine neue Capability.** Abschnitt 8.1 bleibt unveraendert.
+- **kein Schritt im Pairing-Ablauf aus Abschnitt 5.** Ein Einrichtungslink traegt kein Ticket, kein
+  Geheimnis und keinen Parameter - er zeigt auf eine Origin und sonst nichts. Der kryptografische
+  Ablauf, die Bestaetigung im Control Center und die Reihenfolge der Schritte bleiben, wie sie
+  sind.
+
+Ein Link ist damit auch kein Vertrauensanker. Was die App mit einer Origin aus einem Link tun darf,
+entscheidet sie allein: sie uebernimmt sie nur, wenn sie zeichengleich ist mit der eingebauten oder
+der bereits registrierten Origin (`docs/security/THREAT_MODEL.md` 4.20). Der Server kann daran
+nichts erlauben und nichts verbieten.
+
 ## 7. WebSocket-Envelope
 
 ```json

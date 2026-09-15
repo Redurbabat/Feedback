@@ -3,6 +3,7 @@ package com.redurbabat.feedback.ui
 import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
+import com.redurbabat.feedback.BuildConfig
 import com.redurbabat.feedback.agent.AgentConnectionState
 import com.redurbabat.feedback.agent.BackgroundAgentService
 import com.redurbabat.feedback.agent.BackgroundConnectionStore
@@ -21,6 +22,9 @@ import com.redurbabat.feedback.pairing.ServerPairingClient
 import com.redurbabat.feedback.pairing.ServerPairingException
 import com.redurbabat.feedback.pairing.ServerPairingSession
 import com.redurbabat.feedback.pairing.ServerPairingStatus
+import com.redurbabat.feedback.pairing.SetupLinkDecision
+import com.redurbabat.feedback.pairing.SetupLinkPolicy
+import com.redurbabat.feedback.pairing.SetupLinkStore
 import com.redurbabat.feedback.permissions.LocalCapabilityStore
 import com.redurbabat.feedback.protocol.Capability
 import com.redurbabat.feedback.screen.AndroidScreenCapture
@@ -73,6 +77,17 @@ data class FeedbackUiState(
     val identity: DeviceIdentity? = null,
     val identityAvailable: Boolean = false,
     val serverUrl: String = "",
+    /**
+     * `host[:port]` of the server this build was made for, or null when there is none and null
+     * when it could not be rendered safely. The UI turns it into a sentence the owner can read -
+     * a pre-filled text field alone would show the address without saying where it came from.
+     */
+    val buildServerAuthority: String? = null,
+    /** What a setup link did, or why it was refused. Never silence. */
+    val setupLinkNotice: String? = null,
+    val setupLinkRejected: Boolean = false,
+    /** The owner switched setup links off entirely. */
+    val setupLinksIgnored: Boolean = false,
     val pairing: PairingUiPhase = PairingUiPhase.Idle,
     val paired: Boolean = false,
     val pairedDeviceName: String? = null,
@@ -133,6 +148,7 @@ class FeedbackController(
     private val localCapabilityStore = LocalCapabilityStore(applicationContext)
     private val fileShareStore = FileShareStore(applicationContext, secretStore)
     private val backgroundStore = BackgroundConnectionStore(applicationContext)
+    private val setupLinkStore = SetupLinkStore(applicationContext)
     private val metadata = AndroidDeviceMetadataProvider.current()
     private val systemInfoProvider = SystemInfoProvider(applicationContext)
 
@@ -152,6 +168,12 @@ class FeedbackController(
      */
     private var lastAuthenticatedAtElapsedMillis: Long? = null
     private var backgroundedAtElapsedMillis: Long? = null
+
+    /**
+     * A setup link that arrived while the UI was still locked. Held rather than applied, because
+     * a locked app must not change anything, and dropped only once it has been decided on.
+     */
+    private var pendingSetupLink: String? = null
 
     init {
         initialize()
@@ -211,6 +233,7 @@ class FeedbackController(
                     appLockError = "Der lokale App-Schutz konnte nicht sicher gespeichert werden.",
                 )
             }
+            flushPendingSetupLink()
         }
     }
 
@@ -226,6 +249,8 @@ class FeedbackController(
             globalMessage = "Ohne App-Schutz ist die Geräteverwaltung auf einem entsperrten " +
                 "Telefon frei zugänglich. Du kannst ihn jederzeit unter Sicherheit aktivieren.",
         )
+        // Postponing the setup is one of the ways the management UI first becomes visible.
+        flushPendingSetupLink()
     }
 
     /** Opens the setup screen again after it was postponed or the lock was disabled. */
@@ -296,6 +321,7 @@ class FeedbackController(
             appLockRemainingLockoutMillis = 0L,
             appLockError = null,
         )
+        flushPendingSetupLink()
     }
 
     fun reportBiometricUnlockFailed(message: String?) {
@@ -589,6 +615,9 @@ class FeedbackController(
             )
         }
         startLockoutCountdown()
+        // A setup link typically arrives at a locked app - tapping the link is what opens it.
+        // Called unconditionally: the flush itself checks whether the UI is actually unlocked.
+        flushPendingSetupLink()
     }
 
     private fun invalidSecretMessage(failedAttempts: Int): String {
@@ -632,6 +661,178 @@ class FeedbackController(
         lastAuthenticatedAtElapsedMillis = elapsedRealtime()
     }
 
+    // ------------------------------------------------------------- setup links
+
+    /**
+     * Takes the origin a setup link offered, as parsed and rebuilt by
+     * [com.redurbabat.feedback.pairing.SetupLinkActivity]. Null means the link was not one.
+     *
+     * Applying is deliberately not done here. [setServerUrl] returns immediately while the app is
+     * locked, and a locked app is exactly the state a tapped link arrives in - the owner taps the
+     * link, the app opens, the lock screen is what they see. Dropping the link there would make
+     * the feature work only for owners without a local lock. So it is held and decided later, in
+     * the one place that decides.
+     */
+    fun applySetupLink(value: String?) {
+        if (closed.get()) {
+            return
+        }
+        pendingSetupLink = value?.takeIf { it.isNotBlank() } ?: return
+        flushPendingSetupLink()
+    }
+
+    /**
+     * The single point where a buffered setup link is applied. Called once when the link arrives
+     * and again from every path that unlocks the UI, so a link that waited behind the lock is not
+     * lost and is never applied twice.
+     *
+     * Whether the origin may be used is [SetupLinkPolicy]'s answer, not this method's - that is a
+     * trust decision and does not belong in the UI layer. What is decided here is only what the
+     * owner is shown and which field is filled in. The link never starts a pairing.
+     */
+    private fun flushPendingSetupLink() {
+        if (closed.get() || !_state.value.appUnlocked) {
+            return
+        }
+        val candidate = pendingSetupLink ?: return
+        pendingSetupLink = null
+
+        if (_state.value.setupLinksIgnored) {
+            publishSetupLinkOutcome(
+                message = "Ein Einrichtungslink wurde ignoriert, weil du Einrichtungslinks " +
+                    "abgeschaltet hast.",
+                rejected = true,
+            )
+            return
+        }
+
+        val decision = SetupLinkPolicy.decide(
+            offeredOrigin = candidate,
+            buildDefaultOrigin = BuildConfig.DEFAULT_SERVER_URL,
+            registeredOrigin = _state.value.pairedServer,
+        )
+        when (decision) {
+            SetupLinkDecision.Unusable -> publishSetupLinkOutcome(
+                message = "Einrichtungslink abgelehnt: er nennt keine verwendbare Serveradresse.",
+                rejected = true,
+            )
+
+            is SetupLinkDecision.Refused -> publishSetupLinkOutcome(
+                message = rejectionMessage(decision),
+                rejected = true,
+            )
+
+            is SetupLinkDecision.Confirmed -> acceptSetupLink(decision.server)
+        }
+    }
+
+    /** The confirmed origin fills in the address field. It never starts anything. */
+    private fun acceptSetupLink(server: ServerEndpoint) {
+        if (_state.value.paired) {
+            publishSetupLinkOutcome(
+                message = "Der Einrichtungslink bestätigt den bereits gekoppelten Server " +
+                    "${displayAuthority(server)}. Es wurde nichts geändert.",
+                rejected = false,
+            )
+            return
+        }
+        // A pairing that is already running owns the address it started with; overwriting the
+        // field underneath it would describe a session that is not the one on screen.
+        if (_state.value.pairing !is PairingUiPhase.Idle &&
+            _state.value.pairing !is PairingUiPhase.Failed
+        ) {
+            publishSetupLinkOutcome(
+                message = "Der Einrichtungslink wurde nicht übernommen, weil gerade eine " +
+                    "Kopplung läuft.",
+                rejected = true,
+            )
+            return
+        }
+
+        _state.value = _state.value.copy(
+            serverUrl = server.baseUrl,
+            pairing = PairingUiPhase.Idle,
+            setupLinkNotice = "Serveradresse aus dem Einrichtungslink übernommen: " +
+                "${displayAuthority(server)}. Die Kopplung startest du selbst.",
+            setupLinkRejected = false,
+        )
+    }
+
+    /**
+     * The revocation path for this feature: setup links off, persistently, with no way for a link
+     * to turn them back on.
+     */
+    fun setSetupLinksIgnored(ignored: Boolean) {
+        if (!_state.value.appUnlocked || closed.get()) {
+            return
+        }
+        if (ignored) {
+            pendingSetupLink = null
+        }
+        runCatching { setupLinkStore.setIgnored(ignored) }
+            .onSuccess {
+                _state.value = _state.value.copy(
+                    setupLinksIgnored = ignored,
+                    setupLinkNotice = null,
+                    setupLinkRejected = false,
+                )
+                if (!ignored) {
+                    flushPendingSetupLink()
+                }
+            }
+            .onFailure {
+                _state.value = _state.value.copy(
+                    globalMessage = "Die Einstellung konnte nicht gespeichert werden.",
+                )
+            }
+    }
+
+    /** Names both sides. A refusal the owner cannot read is a silent one. */
+    private fun rejectionMessage(refusal: SetupLinkDecision.Refused): String =
+        if (refusal.trusted.isEmpty()) {
+            "Einrichtungslink abgelehnt: er zeigt auf ${displayAuthority(refusal.offered)}. " +
+                "Diese App wurde ohne feste Serveradresse gebaut und ist nicht gekoppelt - es " +
+                "gibt nichts, womit der Link übereinstimmen könnte."
+        } else {
+            "Einrichtungslink abgelehnt: er zeigt auf ${displayAuthority(refusal.offered)}, " +
+                "diese App vertraut " +
+                "${refusal.trusted.joinToString(" bzw. ", transform = ::displayAuthority)}. " +
+                "Die Serveradresse wurde nicht verändert."
+        }
+
+    /**
+     * The outcome goes where the owner can actually see it. The pairing card, and with it the
+     * setup-link line, is only on screen while the device is unpaired.
+     */
+    private fun publishSetupLinkOutcome(message: String, rejected: Boolean) {
+        _state.value = if (_state.value.paired) {
+            _state.value.copy(globalMessage = message)
+        } else {
+            _state.value.copy(setupLinkNotice = message, setupLinkRejected = rejected)
+        }
+    }
+
+    /**
+     * A host is shown only when every character of it is one a host name may contain. Bidi
+     * overrides (U+202A..U+202E, U+2066..U+2069) are the reason this is not simply trusted:
+     * they would let a refused address render as the trusted one, in a message whose whole point
+     * is the difference between the two. ServerEndpoint does not let them through in the first
+     * place - and the place that shows a name to a human still does not rely on that.
+     */
+    private fun displayAuthority(endpoint: ServerEndpoint): String {
+        val authority = endpoint.authority
+        return if (authority.isNotEmpty() && authority.all(::isDisplayableHostCharacter)) {
+            authority
+        } else {
+            UNRENDERABLE_AUTHORITY
+        }
+    }
+
+    private fun isDisplayableHostCharacter(character: Char): Boolean = when (character) {
+        in 'a'..'z', in '0'..'9', '.', ':', '-' -> true
+        else -> false
+    }
+
     fun setServerUrl(value: String) {
         if (!_state.value.appUnlocked) {
             return
@@ -649,6 +850,9 @@ class FeedbackController(
             } else {
                 _state.value.pairing
             },
+            // Typing over the address answers whatever the link said, so the line about it goes.
+            setupLinkNotice = null,
+            setupLinkRejected = false,
             globalMessage = null,
         )
     }
@@ -1078,10 +1282,15 @@ class FeedbackController(
         val appLockStatus = appLockStatusResult.getOrNull()
         val appLockConfigured = appLockStatus?.configured ?: true
         val settings = appLockStatus?.settings ?: AppLockSettings.DEFAULT
+        // The server this build was made for. Empty when the build carries none, in which case
+        // nothing is pre-filled and every setup link is refused for want of anything to match.
+        val buildServer = ServerEndpoint.parseOrNull(BuildConfig.DEFAULT_SERVER_URL)
         _state.value = FeedbackUiState(
             identity = identity,
             identityAvailable = identity != null,
-            serverUrl = stored?.endpoint?.baseUrl.orEmpty(),
+            serverUrl = stored?.endpoint?.baseUrl ?: buildServer?.baseUrl.orEmpty(),
+            buildServerAuthority = buildServer?.let(::displayAuthority),
+            setupLinksIgnored = runCatching { setupLinkStore.isIgnored() }.getOrDefault(false),
             paired = stored != null,
             pairedDeviceName = stored?.registration?.name,
             pairedServer = stored?.endpoint?.baseUrl,
@@ -1305,5 +1514,8 @@ class FeedbackController(
 
     private companion object {
         const val LOCKOUT_TICK_MILLIS = 500L
+
+        /** Stands in for a host that is not safe to render. Never shown next to a real one. */
+        const val UNRENDERABLE_AUTHORITY = "eine nicht darstellbare Adresse"
     }
 }

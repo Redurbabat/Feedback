@@ -19,6 +19,7 @@ import { registerDeviceRoutes } from './routes/devices.js';
 import { registerFileRoutes } from './routes/files.js';
 import { registerScreenRoutes } from './routes/screen.js';
 import { registerPairingRoutes } from './routes/pairing.js';
+import { registerSetupRoutes } from './routes/setup.js';
 import { routeRateLimitName } from './requestContext.js';
 import { applyCorsHeaders, applySecurityHeaders, isAllowedOrigin } from './security.js';
 
@@ -132,16 +133,26 @@ export async function buildApp(context: AppContext): Promise<FastifyInstance> {
 
   // Per-IP rate limit using the bucket configured on the route. This covers
   // the WebSocket upgrade as well; per-frame validation happens in agent.ts.
+  //
+  // The API is matched by prefix because an unknown path below it must be limited too. The
+  // public setup routes (`/pair`, `/.well-known/assetlinks.json`) carry a marker instead: they
+  // are advertised in public and need the same ceiling, but they get their own key scope so a
+  // flood against the setup page cannot spend the API budget of an IP the owner shares with it.
   app.addHook('onRequest', async (request) => {
-    if (!request.url.startsWith(API_PREFIX)) {
+    const isApi = request.url.startsWith(API_PREFIX);
+    if (!isApi && request.routeOptions.config.publicSetup !== true) {
       return;
     }
     const name = routeRateLimitName(request);
-    const decision = context.rateLimiter.consume(`ip:${name}:${request.ip}`, RATE_LIMITS[name]);
+    const scope = isApi ? 'ip' : 'ip-setup';
+    const decision = context.rateLimiter.consume(
+      `${scope}:${name}:${request.ip}`,
+      RATE_LIMITS[name],
+    );
     if (!decision.allowed) {
       throw new ProtocolError('RATE_LIMITED', 'Zu viele Anfragen, bitte spaeter erneut versuchen', {
         retryAfterSeconds: decision.retryAfterSeconds,
-        logDetail: { limit: name, scope: 'ip' },
+        logDetail: { limit: name, scope },
       });
     }
   });
@@ -149,6 +160,13 @@ export async function buildApp(context: AppContext): Promise<FastifyInstance> {
   app.setErrorHandler((error, request, reply) => {
     return sendProtocolError(request, reply, toProtocolError(error));
   });
+
+  // Before the static plugin and before the not-found handler, both on purpose: with
+  // FEEDBACK_STATIC_DIR set, `GET /pair` reaches the SPA fallback below and a visitor without
+  // the app gets the whole Control Center bundle instead of the one page that tells them what
+  // to install. `/.well-known/assetlinks.json` would end the same way - as an HTML page under a
+  // name Android reads as JSON.
+  await registerSetupRoutes(app, context);
 
   app.setNotFoundHandler((request, reply) => {
     // The control center is a single page app, so a deep link has to reach index.html rather
