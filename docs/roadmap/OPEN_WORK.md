@@ -158,8 +158,18 @@ der Hintergrundverbindung im Leerlauf, und der einer laufenden Bildschirmuebertr
 
 ## 4. Bekannte technische Schulden
 
-- **QR-Scanner fehlt.** Android rendert den QR-Code, kann aber keinen scannen. Ein Scanner braucht
-  die Kamera-Berechtigung und wird erst mit dokumentiertem Bedarf gebaut.
+- **Der QR-Code des Geraets hat nirgends einen Leser.** Android rendert ihn, kann aber keinen
+  scannen, und das Control Center ebenso wenig - gesucht wurde nach `BarcodeDetector`,
+  `getUserMedia`, der Kamera-Berechtigung und einem ZXing-Reader, in beiden Quellbaeumen, ohne
+  Treffer. Der Ticket-Weg aus Protokoll 5.2 existiert damit auf der Leitung, aber in keiner
+  Oberflaeche; benutzt wird immer der sechsstellige Code. Die Pairing-Karte hat den Besitzer bis
+  zuletzt aufgefordert, "im Control Center zu scannen" - das ist korrigiert, der Code bleibt
+  stehen fuer den Tag, an dem ein Leser existiert. Ein Scanner braucht die Kamera-Berechtigung und
+  wird erst mit dokumentiertem Bedarf gebaut.
+
+  Nicht verwechseln mit dem QR-Code, den das **Control Center** seit Milestone 8 zeigt: der traegt
+  `https://<origin>/pair` und wird von der normalen Kamera-App des Systems gelesen, nicht von
+  Feedback.
 - ~~`tools/validators/check-protocol-constants.mjs` existiert nicht.~~ **Erledigt.** Der Validator
   vergleicht die 19 Limits aus Abschnitt 11, die acht Capability-Namen und die 13 Fehlercodes
   zwischen `protocol/PROTOCOL.md`, `ProtocolConstants.kt`, `Capability.kt`, `ProtocolError.kt`,

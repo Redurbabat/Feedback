@@ -154,6 +154,43 @@ class SetupLinkPresentationTest {
         assertTrue("feedback.example.com" in announced.message)
     }
 
+    /**
+     * The message used to name the address from the LINK. Both anchors are trusted, so a link
+     * carrying the build default is confirmed on a device paired with a different origin - and
+     * the sentence then claimed that origin was the one it is paired with. It says which server
+     * the device is actually registered with, or says nothing about it at all.
+     */
+    @Test
+    fun `the paired message names the registered server, not the link`() {
+        val announced = announcementFor(
+            outcomeFor(
+                deliver("https://feedback.example.com/pair"),
+                registered = "https://anderer.example.com",
+                paired = true,
+            ),
+        )
+
+        assertTrue(!announced.rejected)
+        assertTrue(announced.message, "anderer.example.com" in announced.message)
+        assertTrue(announced.message, "feedback.example.com" !in announced.message)
+    }
+
+    /** An unreadable registration must not turn into a claim about some other server. */
+    @Test
+    fun `the paired message names no server when the registration cannot be read`() {
+        val announced = announcementFor(
+            outcomeFor(
+                deliver("https://feedback.example.com/pair"),
+                registered = "nicht einmal eine adresse",
+                paired = true,
+            ),
+        )
+
+        assertTrue(!announced.rejected)
+        assertTrue(announced.message, "feedback.example.com" !in announced.message)
+        assertTrue(announced.message, "bereits" in announced.message)
+    }
+
     /** A running pairing owns the address it started with. */
     @Test
     fun `a confirmed link during a running pairing does not overwrite the field`() {

@@ -465,15 +465,21 @@ private fun PairingCard(
                 }
 
                 is PairingUiPhase.Waiting -> {
+                    // "Scannen" stood here and was not true: there is no reader for this code
+                    // anywhere - not in this app and not in the control center. The QR carries the
+                    // high-entropy ticket the protocol describes (5.2) and stays for the day a
+                    // reader exists, but the line that tells the owner what to do now names the
+                    // only thing that works.
                     Text(
-                        text = "Im Control Center scannen oder Code eingeben",
+                        text = "Code im Control Center eingeben",
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary,
                     )
                     QrCodeImage(
                         payload = pairing.qrPayload,
-                        contentDescription = "QR-Code für diese Kopplung. " +
-                            "Alternativ den sechsstelligen Code eingeben.",
+                        contentDescription = "QR-Code mit dem Kopplungs-Ticket. Es gibt dafür " +
+                            "noch keinen Leser; für die Kopplung den sechsstelligen Code " +
+                            "eingeben, der darunter steht.",
                         modifier = Modifier.align(Alignment.CenterHorizontally),
                     )
                     Text(

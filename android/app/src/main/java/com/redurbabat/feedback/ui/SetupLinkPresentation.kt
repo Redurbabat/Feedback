@@ -79,6 +79,7 @@ object SetupLinkPresentation {
 
             is SetupLinkDecision.Confirmed -> confirmation(
                 server = decision.server,
+                registeredOrigin = registeredOrigin,
                 paired = paired,
                 pairingInProgress = pairingInProgress,
             )
@@ -105,14 +106,35 @@ object SetupLinkPresentation {
         }
     }
 
+    /**
+     * The registration is read back through [ServerEndpoint] rather than printed as stored: the
+     * stored string is the only thing here that did not come from a fresh parse, and a message
+     * about which server is trusted is the wrong place to make an exception.
+     */
+    private fun pairedConfirmation(registeredOrigin: String?): String {
+        val registered = registeredOrigin?.let(ServerEndpoint::parseOrNull)
+        val named = registered?.let(::displayAuthority)
+        return if (named == null) {
+            "Der Einrichtungslink nennt einen bekannten Server. Dieses Gerät ist bereits " +
+                "gekoppelt, es wurde nichts geändert."
+        } else {
+            "Der Einrichtungslink nennt einen bekannten Server. Dieses Gerät ist mit " +
+                "$named gekoppelt, es wurde nichts geändert."
+        }
+    }
+
     private fun confirmation(
         server: ServerEndpoint,
+        registeredOrigin: String?,
         paired: Boolean,
         pairingInProgress: Boolean,
     ): SetupLinkOutcome = when {
+        // Named from the REGISTRATION, not from the link. The link may carry the built-in default
+        // while the device is paired with a different origin - both are trusted, so the link is
+        // confirmed either way, and saying "the server you are paired with is <the link's>" would
+        // then be false in exactly the sentence that exists to remove doubt.
         paired -> SetupLinkOutcome.Announced(
-            message = "Der Einrichtungslink bestätigt den bereits gekoppelten Server " +
-                "${displayAuthority(server)}. Es wurde nichts geändert.",
+            message = pairedConfirmation(registeredOrigin),
             rejected = false,
         )
 
