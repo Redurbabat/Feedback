@@ -209,9 +209,13 @@ class CapabilityTest {
 
     @Test
     fun errorCodesAreCompleteAndDenyUnknownCodes() {
-        assertEquals(13, ProtocolError.values().size)
+        assertEquals(14, ProtocolError.values().size)
         assertEquals(ProtocolError.SESSION_EXPIRED, ProtocolError.fromCode("SESSION_EXPIRED"))
         assertEquals(409, ProtocolError.SESSION_EXPIRED.httpStatus)
+        // Control-Center-seitig, hier nur gespiegelt - das Geraet sieht ihn nie. Die Zaehlung
+        // oben ist genau deshalb im Test: eine Ergaenzung soll auffallen, nicht durchrutschen.
+        assertEquals(ProtocolError.REAUTH_REQUIRED, ProtocolError.fromCode("REAUTH_REQUIRED"))
+        assertEquals(403, ProtocolError.REAUTH_REQUIRED.httpStatus)
         assertEquals(410, ProtocolError.PAIRING_EXPIRED.httpStatus)
         assertEquals(429, ProtocolError.RATE_LIMITED.httpStatus)
         assertNull(ProtocolError.fromCode("session_expired"))

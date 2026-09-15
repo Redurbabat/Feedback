@@ -31,6 +31,16 @@ Mindestens pruefen:
 - Fehlerpfade wie abgelaufene Codes, widerrufene Geraete und fehlende Berechtigungen
 - UI-Zustaende fuer offline, denied, revoked und unsupported
 
+### Wer eine Protokollkonstante ergaenzt, aendert damit auch Android
+
+`ProtocolError` und `Capability` werden auf der Android-Seite **gezaehlt**
+(`CapabilityTest.errorCodesAreCompleteAndDenyUnknownCodes`,
+`allEightCapabilitiesAreDeclared`). Das ist Absicht: eine Ergaenzung soll auffallen. Wer also
+einen Fehlercode oder eine Capability hinzufuegt, aendert drei Stellen - `PROTOCOL.md`,
+`server/src/`, `android/.../protocol/` - und **die Zaehlung im Android-Test**. Der Validator
+`tools/validators/check-protocol-constants.mjs` prueft die Listen, nicht die Zaehlung; die faellt
+erst im Android-Build auf, also spaeter als noetig.
+
 ## Abschlussbericht
 
 Nach einer Umsetzung nennen:
