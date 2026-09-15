@@ -95,6 +95,7 @@ class ServerPairingClientTest {
                                 .put("requested", org.json.JSONArray()),
                         )
                         .put("serverTime", "2026-09-13T11:23:20.000Z")
+                        .put("serverPublicKey", SERVER_PUBLIC_KEY)
                 }
 
                 else -> error("unexpected path $path")
@@ -109,6 +110,9 @@ class ServerPairingClientTest {
         val registration = client.claim(session)
 
         assertEquals(deviceToken, registration.deviceToken)
+        // Trust on first use: this is the only moment the device learns which server it belongs
+        // to, so a claim that does not carry the key is refused rather than stored half-blind.
+        assertEquals(SERVER_PUBLIC_KEY, registration.serverPublicKey)
         assertEquals(identity.deviceId, registration.publicDeviceId)
         assertEquals(listOf("system.info"), registration.grantedCapabilities)
         assertEquals(
@@ -154,5 +158,10 @@ class ServerPairingClientTest {
 
         override suspend fun get(path: String, bearerToken: String?): JSONObject =
             error("GET not expected")
+    }
+
+    private companion object {
+        /** The key from `protocol/fixtures/server-identity-v1.json`, so one value means one thing. */
+        const val SERVER_PUBLIC_KEY = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEmDNk66TBNQ6X9RFSuyGMsReTJ+ImZTpNk3cuT03lqM0bnGsRRXoGasOa6Bhl/w6qEB9Cpv1SJW6KG2+9JPk6zA=="
     }
 }

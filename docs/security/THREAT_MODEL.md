@@ -103,7 +103,11 @@ Diese Zusage stand hier, bevor der Code sie einloeste. Bis zur Haertung passiert
 wurde nicht verlangt. Solange der Besitzer die Adresse abtippen musste, war der Schaden begrenzt;
 mit einem Einrichtungslink waere er es nicht mehr.
 **Residual** **Kein Certificate Pinning.** Eine im System- oder Nutzerspeicher installierte
-CA kann die Verbindung aufbrechen. Auf einem Geraet, auf dem jemand eine CA installieren kann,
+CA kann die Verbindung aufbrechen. Was seit der Server-Identitaet dazukommt, ersetzt es nicht,
+deckt aber einen Teil ab: wer die TLS-Strecke aufbricht, aber den Server-Schluessel nicht hat,
+kommt an keinem Verbindungsaufbau mehr vorbei, weil der Nachweis aus
+`POST /agent/server-identity` die Signatur und nicht das Zertifikat prueft. Wer den Datenstrom
+einer *bestehenden* Verbindung mitliest, wird davon nicht gehindert. Auf einem Geraet, auf dem jemand eine CA installieren kann,
 ist ohnehin mehr verloren; ein Pinning waere trotzdem eine echte Verbesserung und ist offen.
 
 ### 4.5 Gestohlenes Browser-Session-Cookie
@@ -438,11 +442,20 @@ Geraet, das die Verifikation neu durchlaufen laesst.
 
 Was geschuetzt bleibt, ist eine **bestehende** Registrierung gegen den *Link*: ihre
 Endpunkt-Adresse liegt Keystore-versiegelt neben dem Geraeteschluessel, und kein Link kann sie
-umbiegen - er bestaetigt dort hoechstens, was ohnehin gilt. Gegen den Domainwechsel selbst
-schuetzt das nicht: das Geraet spricht weiter mit *der Adresse*, und hinter der Adresse steht dann
-der neue Inhaber, dem der Agent im Handshake seinen `deviceToken` reicht. Nicht geschuetzt ist
-ausserdem jede **Neu**kopplung: ein frisch installiertes Geraet hat als Anker allein den
-eingebauten Default, und der zeigt auf genau die verlorene Domain.
+umbiegen - er bestaetigt dort hoechstens, was ohnehin gilt.
+
+**Und seit der Server einen eigenen Schluessel hat, auch gegen den Domainwechsel selbst.** Der
+Satz, der hier stand - "das Geraet spricht weiter mit *der Adresse*, und hinter der Adresse steht
+dann der neue Inhaber, dem der Agent im Handshake seinen `deviceToken` reicht" - trifft nicht mehr
+zu. Das Geraet laesst sich vor jedem Verbindungsaufbau den beim Pairing gesehenen Schluessel
+nachweisen (`POST /agent/server-identity`, Protokoll 4.3 und 6.1) und sendet den Token erst
+danach. Der neue Domaininhaber hat diesen Schluessel nicht; das Geraet geht in den Zustand
+`UNTRUSTED_SERVER`, sagt es dem Besitzer und versucht es nicht erneut. Adresse und Identitaet sind
+damit zwei verschiedene Dinge, und nur die Adresse ist vererbbar.
+
+Nicht geschuetzt bleibt jede **Neu**kopplung: ein frisch installiertes Geraet hat als Anker allein
+den eingebauten Default, der auf genau die verlorene Domain zeigt, und pinnt beim ersten `claim`,
+wen immer es dort antrifft. Trust on first use schuetzt jedes Mal ausser dem ersten.
 
 Bleibt der betriebliche Weg, und der steht in `BETRIEB.md` 3.6: die Domain halten, und bei Verlust
 alle Geraete widerrufen und einen Build mit neuer Adresse ausliefern. Der Widerruf ist dabei nicht
@@ -487,12 +500,17 @@ Ungeloest, nach Nutzen sortiert:
 2. **Keine zweite Stufe im Control Center** vor dem Erteilen einer Capability (4.5).
 3. **Keine Rotation des `deviceToken`** (4.13).
 4. **Rate Limits und Presence nur im Prozessspeicher** (4.14).
-5. **Kein Pinning der Server-Identitaet** an den beim Pairing gesehenen Schluessel (TOFU waere
-   moeglich). Mit den Einrichtungslinks ist dieser Punkt **dringlicher** geworden: er ist der
-   einzige, der 4.20 und 4.21 zugleich schliessen wuerde. Solange die Server-Identitaet eine
-   Adresse ist, erbt jeder ihr Vertrauen, der diese Adresse bekommt - der Angreifer, der sie
-   unterschiebt, und der naechste Inhaber der Domain. Ein beim Pairing gesehener Schluessel ist
-   nicht uebertragbar.
+5. ~~**Kein Pinning der Server-Identitaet**~~ **- gebaut.** Der Server hat ein eigenes
+   P-256-Schluesselpaar; das Geraet speichert den beim `claim` gesehenen oeffentlichen Schluessel
+   neben dem Token und laesst sich ihn vor jedem Verbindungsaufbau nachweisen
+   (`POST /agent/server-identity`, Protokoll 4.3 und 6.1), **bevor** es den `deviceToken` sendet.
+   Stimmt der Schluessel nicht, geht nichts mehr raus und es wird nicht erneut versucht. Damit ist
+   die Server-Identitaet keine Adresse mehr, und 4.20 wie 4.21 verlieren ihren Kern: wer die
+   Adresse erbt, erbt den Schluessel nicht.
+
+   Was offen bleibt: das erste Pairing selbst. Trust on first use heisst, dass ein Geraet, das von
+   Anfang an mit dem Falschen koppelt, den Falschen pinnt - dagegen hilft nur, dass die Adresse
+   beim ersten Mal stimmt (4.20) und die APK die eigene ist (4.10).
 6. **Keine Ende-zu-Ende-Verschluesselung der Inhalte** gegenueber dem Serverbetreiber und gegen
    einen TLS-beendenden Tunnel - weder fuer Dateien noch fuer Bildframes (4.15, 4.19). Das ist
    der groesste offene Punkt der Liste und der einzige, dessen Loesung neue Kryptografie braucht

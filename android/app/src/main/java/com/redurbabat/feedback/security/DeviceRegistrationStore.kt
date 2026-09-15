@@ -25,6 +25,7 @@ class DeviceRegistrationStore(
             .put("name", registration.name)
             .put("pairedAt", registration.pairedAt)
             .put("grantedCapabilities", capabilities)
+            .put("serverPublicKey", registration.serverPublicKey)
         secretStore.put(STORE_KEY, json.toString())
     }
 
@@ -48,6 +49,7 @@ class DeviceRegistrationStore(
                     name = json.getString("name"),
                     pairedAt = json.getString("pairedAt"),
                     grantedCapabilities = capabilities,
+                    serverPublicKey = json.getString("serverPublicKey"),
                 ),
             )
         } catch (error: Exception) {
@@ -60,7 +62,13 @@ class DeviceRegistrationStore(
     }
 
     companion object {
-        private const val FORMAT_VERSION = 1
+        /**
+         * Bumped to 2 when the server's public key became part of a registration. A version 1
+         * record is refused rather than read without it: a registration that cannot verify the
+         * server would silently be the very thing this field exists to prevent. No release has
+         * ever shipped version 1, so refusing costs nothing and guessing would cost the guarantee.
+         */
+        private const val FORMAT_VERSION = 2
         private const val STORE_KEY = "device.registration.v1"
     }
 }

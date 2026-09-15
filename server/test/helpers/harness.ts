@@ -1,5 +1,8 @@
 import { generateKeyPairSync, randomBytes, sign as cryptoSign } from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 import type { FastifyInstance } from 'fastify';
 
@@ -36,6 +39,12 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     host: '127.0.0.1',
     port: 0,
     databaseFile: ':memory:',
+    // A fresh key per harness, so two tests never share a server identity - and so no test run
+    // leaves one lying next to the repository.
+    serverKeyFile: path.join(
+      mkdtempSync(path.join(tmpdir(), 'feedback-test-identity-')),
+      'identity.pem',
+    ),
     cookieSecret: randomBytes(32).toString('base64url'),
     allowedOrigins: [TEST_ORIGIN],
     // Unset by default: naming this server's own address on the setup page is a deployment

@@ -1407,6 +1407,19 @@ class FeedbackController(
         if (closed.get()) {
             return
         }
+        if (connectionState == AgentConnectionState.UNTRUSTED_SERVER) {
+            // Deliberately not clearing the registration: the owner decides what happened. It may
+            // be a server restored without its key, and it may be that the address changed hands
+            // (THREAT_MODEL 4.20, 4.21). Either way the token stays put and nothing reconnects.
+            _state.value = _state.value.copy(
+                agentState = connectionState,
+                globalMessage = "Die Verbindung wurde gestoppt: unter dieser Adresse antwortet " +
+                    "nicht mehr der Server, mit dem dieses Gerät gekoppelt wurde. Es wurde nichts " +
+                    "gesendet. Wenn du den Server neu aufgesetzt hast, koppele das Gerät bewusst " +
+                    "neu; sonst prüfe, wem die Adresse jetzt gehört.",
+            )
+            return
+        }
         if (connectionState == AgentConnectionState.REVOKED) {
             backgroundStore.setEnabled(false)
             localCapabilityStore.clear()

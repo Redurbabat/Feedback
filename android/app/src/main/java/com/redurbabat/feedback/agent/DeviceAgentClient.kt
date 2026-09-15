@@ -20,8 +20,12 @@ import com.redurbabat.feedback.screen.ScreenCaptureSource
 import com.redurbabat.feedback.screen.ScreenOutcome
 import com.redurbabat.feedback.screen.ScreenRequestHandler
 import com.redurbabat.feedback.screen.ScreenStopReason
+import com.redurbabat.feedback.security.CryptoUtils
 import com.redurbabat.feedback.security.DeviceRegistrationStore
+import com.redurbabat.feedback.security.ServerIdentity
+import com.redurbabat.feedback.security.ServerIdentityCheck
 import com.redurbabat.feedback.security.StoredDeviceRegistration
+import java.security.SecureRandom
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
@@ -35,8 +39,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -56,6 +62,11 @@ import org.json.JSONObject
  * Listed explicitly rather than derived from "everything implemented", so adding a new
  * implemented capability does not silently make it a way to read shares.
  */
+/** 24 bytes, so a challenge is never the one the attacker prepared for. */
+private const val NONCE_BYTES = 24
+
+private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+
 private val SHARE_CAPABILITIES = listOf(
     Capability.FILES_READ,
     Capability.MEDIA_PHOTOS_READ,
@@ -88,6 +99,7 @@ class DeviceAgentClient(
         ScreenRequestHandler(source) { pushScreenMessages() }
     }
 
+    private val secureRandom = SecureRandom()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _state = MutableStateFlow(AgentConnectionState.STOPPED)
     val state: StateFlow<AgentConnectionState> = _state.asStateFlow()
@@ -110,14 +122,76 @@ class DeviceAgentClient(
             return
         }
         _state.value = AgentConnectionState.CONNECTING
+        // Asked before anything is said. The token is a Bearer header on the upgrade request, so
+        // by the time the socket is opened it has already left the device - which is why the
+        // server has to prove which server it is first, and why this cannot be folded into the
+        // connection itself.
+        scope.launch { openSocketIfServerIsTrusted() }
+    }
+
+    private fun openSocketIfServerIsTrusted() {
+        when (proveServer()) {
+            ServerIdentityCheck.Trusted -> {
+                val request = Request.Builder()
+                    .url(storedRegistration.endpoint.webSocket("/api/v1/agent/ws"))
+                    .header(
+                        "Authorization",
+                        "Bearer ${storedRegistration.registration.deviceToken}",
+                    )
+                    .build()
+                webSocket = client.newWebSocket(request, Listener())
+            }
+
+            ServerIdentityCheck.KeyChanged,
+            ServerIdentityCheck.BadSignature,
+            ServerIdentityCheck.Malformed,
+            -> _state.value = AgentConnectionState.UNTRUSTED_SERVER
+
+            // Not an answer about identity at all - nobody was reachable. That is OFFLINE, and the
+            // backoff retries it. Calling it untrusted would turn every tunnel hiccup into an
+            // alarm the owner learns to click away.
+            null -> _state.value = AgentConnectionState.OFFLINE
+        }
+    }
+
+    /**
+     * Asks the server to sign a fresh challenge, and checks it against the key stored at pairing.
+     *
+     * Returns null when the question could not be asked at all, so "unreachable" and "someone
+     * else is there" stay apart: one is retried, the other must not be.
+     */
+    private fun proveServer(): ServerIdentityCheck? {
+        val registration = storedRegistration.registration
+        val nonce = CryptoUtils.Base64Url.encode(ByteArray(NONCE_BYTES).also(secureRandom::nextBytes))
+        val body = JSONObject()
+            .put("deviceId", registration.publicDeviceId)
+            .put("nonce", nonce)
+            .toString()
+            .toRequestBody(JSON_MEDIA_TYPE)
         val request = Request.Builder()
-            .url(storedRegistration.endpoint.webSocket("/api/v1/agent/ws"))
-            .header(
-                "Authorization",
-                "Bearer ${storedRegistration.registration.deviceToken}",
-            )
+            .url(storedRegistration.endpoint.api("/api/v1/agent/server-identity"))
+            .post(body)
             .build()
-        webSocket = client.newWebSocket(request, Listener())
+
+        val answer = runCatching {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return@use null
+                }
+                response.body?.string()?.let(::JSONObject)
+            }
+        }.getOrNull() ?: return null
+
+        return runCatching {
+            ServerIdentity.check(
+                pinnedPublicKeyBase64 = registration.serverPublicKey,
+                deviceId = registration.publicDeviceId,
+                nonceBase64Url = nonce,
+                offeredPublicKeyBase64 = answer.getString("serverPublicKey"),
+                issuedAtEpochMillis = answer.getLong("issuedAt"),
+                signatureBase64Url = answer.getString("signature"),
+            )
+        }.getOrDefault(ServerIdentityCheck.Malformed)
     }
 
     /**

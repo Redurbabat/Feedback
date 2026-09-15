@@ -32,7 +32,10 @@ import {
   screenStopSchema,
   systemInfoPayloadSchema,
 } from '../../protocol/wire.js';
+import { DEVICE_ID_PATTERN } from '../../crypto/deviceIdentity.js';
+import { serverIdentityPayload } from '../../crypto/serverIdentity.js';
 import { requireDevicePrincipal, requireDeviceToken } from '../deviceAuth.js';
+import { parseOrThrow } from '../validation.js';
 
 interface WritableSocket {
   send(data: string): void;
@@ -112,11 +115,68 @@ async function serverGrantedCapabilities(
     );
 }
 
+/**
+ * What a device may ask with, before it has proved anything.
+ *
+ * Only its own public identifier and a fresh nonce - nothing that would be worth intercepting,
+ * because the point of the route is that the device does not yet know whom it is talking to.
+ */
+const serverIdentitySchema = z
+  .object({
+    deviceId: z.string().regex(DEVICE_ID_PATTERN, 'hat nicht das Format fb-<24 hex>'),
+    nonce: z
+      .string()
+      .min(16)
+      .max(64)
+      .regex(/^[A-Za-z0-9_-]+$/, 'ist kein Base64Url'),
+  })
+  .strict();
+
 /** Agent REST + WebSocket endpoints for presence and privileged responses. */
 export async function registerAgentRoutes(
   app: FastifyInstance,
   context: AppContext,
 ): Promise<void> {
+  /*
+   * The server proving itself, before the device says anything it cannot take back.
+   *
+   * Everywhere else in this protocol the device authenticates and the server does not: the
+   * deviceToken travels as a Bearer header in the very first request, including the WebSocket
+   * upgrade. That was survivable while "which server" meant "which address" - but an address can
+   * change hands, through a slipped setup link (THREAT_MODEL 4.20) or a domain that lapses and is
+   * registered by someone else (4.21), and the token would be handed to whoever answers.
+   *
+   * So this route is unauthenticated on purpose: it is the one the device calls FIRST, and it
+   * carries no secret in either direction. The device sends only the id it already publishes and
+   * a fresh nonce; the answer is a signature over both. A device that cannot match the signature
+   * against the key it saw when it paired stops there and never sends its token.
+   */
+  app.post(
+    '/agent/server-identity',
+    { config: { rateLimit: 'apiDefault' } },
+    async (request) => {
+      const body = parseOrThrow(serverIdentitySchema, request.body);
+      const issuedAt = context.clock.now();
+      const publicKeyBase64 = context.serverIdentity.publicKeyBase64;
+      const payload = serverIdentityPayload({
+        deviceId: body.deviceId,
+        nonceBase64Url: body.nonce,
+        publicKeyBase64,
+        issuedAtEpochMillis: issuedAt,
+      });
+
+      // Deliberately the same answer for a known and an unknown deviceId. This route says who the
+      // server is, not who it knows - telling the two apart would turn it into an oracle for
+      // whether a given device is paired here.
+      return {
+        version: PROTOCOL_VERSION,
+        serverPublicKey: publicKeyBase64,
+        issuedAt,
+        signature: context.serverIdentity.sign(payload),
+      };
+    },
+  );
+
   app.get('/agent/me', async (request) => {
     const principal = await requireDeviceToken(context, request);
     const granted = await serverGrantedCapabilities(context, principal.device.id);

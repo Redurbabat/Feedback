@@ -1183,6 +1183,7 @@ private fun agentStateLabel(state: AgentConnectionState): String = when (state) 
     AgentConnectionState.CONNECTING -> "Verbindet …"
     AgentConnectionState.ONLINE -> "Online"
     AgentConnectionState.OFFLINE -> "Offline"
+    AgentConnectionState.UNTRUSTED_SERVER -> "Server nicht wiedererkannt"
     AgentConnectionState.REVOKED -> "Widerrufen"
     AgentConnectionState.ERROR -> "Fehler"
 }

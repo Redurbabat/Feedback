@@ -251,16 +251,21 @@ ausfuehrlich benannt:
 - Der Fehlversuchszaehler liegt im privaten App-Speicher und schuetzt nicht gegen Root.
 - Biometrie ist ein Komfort-Gate, kein zweiter kryptografischer Faktor.
 - Ein vollstaendig kompromittiertes Geraet kann die App-Schicht in jedem Fall umgehen.
-- **Die Server-Identitaet haengt an einer Adresse, nicht an einem Schluessel.** Beim Pairing sieht
-  das Geraet den Server nur durch TLS hindurch; es merkt sich seine Adresse, nicht seinen
-  Schluessel. Ein Trust-on-first-use - der beim Pairing gesehene Server-Schluessel wird versiegelt
-  gespeichert und bei jeder spaeteren Verbindung verlangt - ist der einzige Punkt, der
-  Threat Model 4.20 **und** 4.21 zugleich schliessen wuerde: eine untergeschobene Adresse haette
-  dann keinen passenden Schluessel, und ein neuer Domaininhaber erbte die Adresse, aber nicht den
-  Schluessel. Nicht gebaut. Es steht als Punkt 5 in Abschnitt 6 des Threat Models, und die
-  Einrichtungslinks haben es dringlicher gemacht, nicht geloest. Offen ist dabei auch die
-  unbequeme Haelfte: ein absichtlicher Serverumzug muesste dann vom Besitzer bestaetigt werden
-  koennen, sonst waere jeder Umzug ein Neukoppeln aller Geraete.
+- ~~**Die Server-Identitaet haengt an einer Adresse, nicht an einem Schluessel.**~~ **Gebaut.**
+  Der Server hat ein eigenes P-256-Schluesselpaar in `identity.pem`; das Geraet speichert den beim
+  `claim` gesehenen oeffentlichen Schluessel neben dem Token und laesst sich ihn ueber
+  `POST /agent/server-identity` nachweisen, **bevor** es den `deviceToken` sendet - der ging bis
+  dahin als `Bearer`-Header schon im WebSocket-Upgrade raus, also bevor der Server irgendetwas
+  bewiesen hatte. Threat Model 4.20 und 4.21 verlieren damit ihren Kern.
+
+  Die unbequeme Haelfte ist so entschieden, nicht geloest: ein absichtlicher Serverumzug **ist**
+  ein bewusstes Neukoppeln. Es gibt keinen Knopf, der einen neuen Schluessel akzeptiert - genau
+  der waere die Stelle, an der ein Angreifer den Besitzer zum Wegklicken bringt. Der Preis steht
+  in `BETRIEB.md` 3.7 und in Abschnitt 4: `identity.pem` gehoert in dieselbe Sicherung wie die
+  Datenbank, sonst kostet jede Wiederherstellung alle Kopplungen.
+
+  Offen bleibt das erste Pairing: Trust on first use schuetzt jedes Mal ausser dem ersten. Wer
+  von Anfang an mit dem Falschen koppelt, pinnt den Falschen.
 
 ## 7. Naechster konkreter Schritt
 

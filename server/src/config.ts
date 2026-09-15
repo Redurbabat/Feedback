@@ -211,6 +211,16 @@ const envSchema = z.object({
    */
   FEEDBACK_ANDROID_CERT_SHA256: androidCertSha256Schema.optional(),
   FEEDBACK_ANDROID_PACKAGE: androidPackageSchema.default('com.redurbabat.feedback'),
+  /**
+   * Where the server's own identity key lives. Defaults to `identity.pem` next to the database.
+   *
+   * Its own file and deliberately not a row in the database: `drizzle/0001_init.sql` states that
+   * secrets are stored exclusively as SHA-256 digests, and a raw private key would make that
+   * false. The consequence has to be operated, not just noted - a backup of the database alone
+   * does not restore the identity, and a server that comes back without its key looks to every
+   * paired device exactly like a substituted one. Back up both (`BETRIEB.md`).
+   */
+  FEEDBACK_SERVER_KEY_FILE: z.string().min(1).optional(),
 });
 
 export interface AppConfig {
@@ -219,6 +229,8 @@ export interface AppConfig {
   readonly host: string;
   readonly port: number;
   readonly databaseFile: string;
+  /** Where the server's own identity key is kept. Belongs in the backup next to the database. */
+  readonly serverKeyFile: string;
   readonly cookieSecret: string;
   readonly allowedOrigins: readonly string[];
   /**
@@ -330,6 +342,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     host: value.FEEDBACK_HOST,
     port: value.FEEDBACK_PORT,
     databaseFile: value.FEEDBACK_DATABASE_FILE,
+    // Next to the database by default, because the two belong together: restoring one without
+    // the other is what a substituted server looks like from a device.
+    serverKeyFile:
+      value.FEEDBACK_SERVER_KEY_FILE ??
+      path.join(path.dirname(value.FEEDBACK_DATABASE_FILE), 'identity.pem'),
     cookieSecret: value.FEEDBACK_COOKIE_SECRET,
     allowedOrigins: value.FEEDBACK_ALLOWED_ORIGINS,
     publicOrigin: value.FEEDBACK_PUBLIC_ORIGIN,

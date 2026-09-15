@@ -75,9 +75,30 @@ const fixtureDir = path.join(ROOT, FIXTURE_DIR);
 if (!existsSync(fixtureDir)) {
   fatal(`${FIXTURE_DIR} fehlt.`);
 }
-const files = readdirSync(fixtureDir).filter((name) => name.endsWith('.json'));
-if (files.length === 0) {
+/*
+ * Fixtures in this directory that are not wire messages.
+ *
+ * Named one by one rather than skipped by a pattern: a validator that quietly ignores files it
+ * does not recognise stops being a validator the first time someone adds one by mistake. Each
+ * entry says which test reads the file instead, so the coverage is checked somewhere.
+ */
+const NON_MESSAGE_FIXTURES = new Map([
+  [
+    'server-identity-v1.json',
+    'Signaturen, keine Envelopes - gelesen von server/test/protocol/serverIdentityFixtures.test.ts ' +
+      'und ServerIdentityFixtureTest.kt',
+  ],
+]);
+
+const allFiles = readdirSync(fixtureDir).filter((name) => name.endsWith('.json'));
+const files = allFiles.filter((name) => !NON_MESSAGE_FIXTURES.has(name));
+if (allFiles.length === 0) {
   fatal(`${FIXTURE_DIR} enthaelt keine Fixtures.`);
+}
+for (const [name, reason] of NON_MESSAGE_FIXTURES) {
+  if (!allFiles.includes(name)) {
+    fatal(`${FIXTURE_DIR}/${name} ist als Ausnahme deklariert, existiert aber nicht: ${reason}`);
+  }
 }
 
 const seen = new Map();

@@ -113,3 +113,4 @@ export function isCapabilityV1(value: string): value is CapabilityV1 {
 /** Canonical signature payload prefixes (section 4). */
 export const CANONICAL_PAIRING_START_HEADER = 'feedback-pairing-start-v1';
 export const CANONICAL_PAIRING_CLAIM_HEADER = 'feedback-pairing-claim-v1';
+export const CANONICAL_SERVER_IDENTITY_HEADER = 'feedback-server-identity-v1';

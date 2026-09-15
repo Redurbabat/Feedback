@@ -37,6 +37,12 @@ data class DeviceRegistration(
     val name: String,
     val pairedAt: String,
     val grantedCapabilities: List<String>,
+    /**
+     * The server's public key, as it was at the moment of pairing. Trust on first use: from here
+     * on the device asks for a proof of exactly this key before it hands over [deviceToken], so
+     * an address that later changes hands no longer carries the trust with it.
+     */
+    val serverPublicKey: String,
 )
 
 /** Implements protocol/PROTOCOL.md sections 4-6 for the Android side. */
@@ -192,6 +198,12 @@ class ServerPairingClient(
                 add(capability)
             }
         }
+        // Required, not optional. A registration without it could never verify anything, and an
+        // unverifiable registration that looks like a normal one is worse than a refused pairing.
+        val serverPublicKey = requiredString(json, "serverPublicKey")
+        if (serverPublicKey.length > ProtocolConstants.PUBLIC_KEY_MAX_BASE64) {
+            throw ServerPairingException("Server returned an oversized public key")
+        }
         DeviceRegistration(
             deviceToken = deviceToken,
             serverDeviceId = requiredString(device, "id"),
@@ -199,6 +211,7 @@ class ServerPairingClient(
             name = requiredString(device, "name"),
             pairedAt = requiredString(device, "pairedAt"),
             grantedCapabilities = granted,
+            serverPublicKey = serverPublicKey,
         )
     } catch (error: ServerPairingException) {
         throw error

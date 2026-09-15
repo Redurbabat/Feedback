@@ -482,6 +482,38 @@ Widerrufspfad; hier ist er, und er hat drei voneinander unabhaengige Schalter:
 Keiner der drei Schalter beruehrt eine bestehende Kopplung: sie schalten nur ab, wie die Adresse
 auf das Geraet kommt.
 
+### 3.7 Der Server erkennt sich aus - und was zu sichern ist
+
+Seit der Server ein eigenes Schluesselpaar hat, ist seine Identitaet nicht mehr seine Adresse. Das
+Geraet merkt sich beim Koppeln den oeffentlichen Schluessel und laesst sich ihn vor **jedem**
+Verbindungsaufbau nachweisen, bevor es sein Token sendet. Wer die Adresse uebernimmt - ein
+untergeschobener Link, eine abgelaufene Domain -, kommt damit nicht mehr an ein gekoppeltes
+Geraet heran (Bedrohungen 4.20 und 4.21).
+
+| Was | Wo | Warum |
+| --- | --- | --- |
+| `identity.pem` | neben der Datenbank, oder `FEEDBACK_SERVER_KEY_FILE` | der Schluessel, an dem die Geraete diesen Server wiedererkennen |
+
+Er entsteht beim ersten Start von selbst, mit Dateirechten `0600`, und wird danach **nie**
+ersetzt: eine unlesbare Schluesseldatei bricht den Start ab, statt einen neuen Schluessel zu
+erzeugen. Das ist Absicht - ein neuer Schluessel wuerde jedes gekoppelte Geraet aussperren, und
+ein Startabbruch ist die Meldung, auf die Sie reagieren koennen.
+
+Er liegt bewusst **nicht** in der Datenbank: dort stehen Geheimnisse ausschliesslich als
+SHA-256-Abdruck (`drizzle/0001_init.sql`), und ein privater Schluessel wuerde diesen Satz falsch
+machen. Der Preis steht in Abschnitt 4: **sichern Sie beide Dateien zusammen.**
+
+**Wenn ein Geraet "Server nicht wiedererkannt" meldet**, hat es unter der gewohnten Adresse einen
+anderen Schluessel angetroffen. Es hat nichts gesendet und versucht es nicht erneut. Zwei Faelle:
+
+- **Sie haben den Server neu aufgesetzt und den Schluessel verloren.** Dann stimmt die Meldung,
+  und der Weg ist, das Geraet bewusst neu zu koppeln.
+- **Sie haben nichts getan.** Dann pruefen Sie, wem die Adresse jetzt gehoert, bevor Sie
+  irgendetwas neu koppeln.
+
+Es gibt keinen Knopf, der die Meldung wegklickt. Das ist der Punkt: die einzige Art, den Schluessel
+zu wechseln, ist eine bewusste Neukopplung.
+
 ## 4. Ehrliche Grenzen / offen
 
 - **Presence und Rate Limits liegen im Arbeitsspeicher.** Der Server ist damit
@@ -492,6 +524,10 @@ auf das Geraet kommt.
   unauthentifizierten `GET /health` gibt es, aber nichts fragt ihn ab - und wer ihn abfragt,
   erkennt damit eine Feedback-Installation (Threat Model 4.21).
 - **Keine Backup-Strategie.** Die SQLite-Datei enthaelt Benutzer, Geraete und Audit-Eintraege.
+  **Und sie allein genuegt nicht mehr:** daneben liegt `identity.pem`, der Schluessel, an dem die
+  Geraete diesen Server wiedererkennen (Abschnitt 3.7). Wer nur die Datenbank sichert und den
+  Schluessel verliert, bekommt einen Server zurueck, den jedes gekoppelte Geraet fuer einen
+  fremden haelt - zu Recht. Beide Dateien gehoeren in dieselbe Sicherung.
 - **Kein Monitoring.** Ein abgestuerzter Prozess faellt dadurch auf, dass Geraete offline gehen.
 - Ein Tunnel-Hostname wechselt je nach Dienst bei jedem Start. Aendert sich die Server-URL,
   muss das Geraet neu gekoppelt werden - die Registrierung haengt an der Adresse.

@@ -188,11 +188,16 @@ export async function registerPairingRoutes(
       const params = parseOrThrow(paramsSchema, request.params);
       consumeRateLimit(context, 'pairingClaim', 'pairing', params.pairingId);
       const body = parseOrThrow(claimSchema, request.body);
-      return context.pairing.claim(params.pairingId, {
+      const claimed = await context.pairing.claim(params.pairingId, {
         deviceSecret: body.deviceSecret,
         issuedAt: body.issuedAt,
         signature: body.signature,
       });
+      // Trust on first use: this is the one moment the device learns which server it belongs to.
+      // From here on it asks for a proof of this key before it hands over the token, so an
+      // address that later changes hands - a slipped link (4.20), a lapsed domain (4.21) - no
+      // longer carries the trust with it.
+      return { ...claimed, serverPublicKey: context.serverIdentity.publicKeyBase64 };
     },
   );
 }

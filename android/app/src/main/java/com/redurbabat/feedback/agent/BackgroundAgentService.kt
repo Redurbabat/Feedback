@@ -157,6 +157,14 @@ class BackgroundAgentService : Service() {
                         stopSelf()
                     }
 
+                    // No reconnect and no stopSelf: the service stays up precisely so the
+                    // notification keeps saying this, instead of the device going quiet in a way
+                    // that is indistinguishable from a flat battery.
+                    AgentConnectionState.UNTRUSTED_SERVER -> {
+                        reconnectJob?.cancel()
+                        reconnectJob = null
+                    }
+
                     AgentConnectionState.STOPPED,
                     AgentConnectionState.CONNECTING,
                     -> Unit
@@ -258,6 +266,7 @@ class BackgroundAgentService : Service() {
         AgentConnectionState.CONNECTING -> "Verbindung zum Control Center wird hergestellt"
         AgentConnectionState.ONLINE -> "Gerät ist für erlaubte Anfragen erreichbar"
         AgentConnectionState.OFFLINE -> "Offline · erneuter Verbindungsversuch folgt"
+        AgentConnectionState.UNTRUSTED_SERVER -> "Server nicht wiedererkannt · Verbindung gestoppt"
         AgentConnectionState.REVOKED -> "Gerät wurde widerrufen"
         AgentConnectionState.ERROR -> "Verbindungsfehler · erneuter Versuch folgt"
     }

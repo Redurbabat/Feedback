@@ -1,0 +1,32 @@
+{
+  "note": "Erzeugt vom echten Server-Modul (server/src/crypto/serverIdentity.ts). Beide Seiten lesen diese Datei.",
+  "payloadPrefix": "feedback-server-identity-v1",
+  "challenge": {
+    "deviceId": "fb-0123456789abcdef01234567",
+    "nonce": "Zml4dHVyZS1ub25jZS0wMDE",
+    "issuedAt": 1700000000000
+  },
+  "canonicalPayload": "feedback-server-identity-v1\nfb-0123456789abcdef01234567\nZml4dHVyZS1ub25jZS0wMDE\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEmDNk66TBNQ6X9RFSuyGMsReTJ+ImZTpNk3cuT03lqM0bnGsRRXoGasOa6Bhl/w6qEB9Cpv1SJW6KG2+9JPk6zA==\n1700000000000",
+  "accepted": {
+    "description": "Der Server, mit dem gekoppelt wurde. Muss Trusted ergeben.",
+    "pinnedPublicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEmDNk66TBNQ6X9RFSuyGMsReTJ+ImZTpNk3cuT03lqM0bnGsRRXoGasOa6Bhl/w6qEB9Cpv1SJW6KG2+9JPk6zA==",
+    "offeredPublicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEmDNk66TBNQ6X9RFSuyGMsReTJ+ImZTpNk3cuT03lqM0bnGsRRXoGasOa6Bhl/w6qEB9Cpv1SJW6KG2+9JPk6zA==",
+    "signature": "MEUCIQCPIJrcLL52S14teXq1GZk53Ot8ewYFiTaOW6sxLKi02QIgKhBEXNMAZY-MN_U76lMPD0YZDFEqx0Z3sM1Xn2CXujI"
+  },
+  "rejected": [
+    {
+      "reason": "key_changed",
+      "description": "Ein anderer Server mit einer tadellosen Signatur ueber den EIGENEN Schluessel. Wer gegen den mitgelieferten Schluessel prueft, sagt hier ja.",
+      "pinnedPublicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEmDNk66TBNQ6X9RFSuyGMsReTJ+ImZTpNk3cuT03lqM0bnGsRRXoGasOa6Bhl/w6qEB9Cpv1SJW6KG2+9JPk6zA==",
+      "offeredPublicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAElrWSZQKx3k+cD6rPiiPcK3C0UICAvIwbD9dohu05nCwsqVEmsGyY1tRXond76/OYvilNXD+Zh8HUID7e1pMaRg==",
+      "signature": "MEUCIGpTiLDniADD0R-yrI2PEFukCUdP0sFpNm1xmqSTP4GtAiEArq_e88_7EOS26mRqM9A-X72drDNEkPfV82uslf4xsbU"
+    },
+    {
+      "reason": "bad_signature",
+      "description": "Nennt den richtigen Schluessel, kann aber nicht dafuer signieren.",
+      "pinnedPublicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEmDNk66TBNQ6X9RFSuyGMsReTJ+ImZTpNk3cuT03lqM0bnGsRRXoGasOa6Bhl/w6qEB9Cpv1SJW6KG2+9JPk6zA==",
+      "offeredPublicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEmDNk66TBNQ6X9RFSuyGMsReTJ+ImZTpNk3cuT03lqM0bnGsRRXoGasOa6Bhl/w6qEB9Cpv1SJW6KG2+9JPk6zA==",
+      "signature": "MEYCIQDuA4ljCXOpl7K5UcAiW8aFDx82et6iFv6i_LP3QzTugAIhAKavTlbI4sH3Kqx6ZBk8nzcwrZvMm3MxjYIpZNpcKcqH"
+    }
+  ]
+}

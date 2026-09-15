@@ -7,7 +7,7 @@ import com.redurbabat.feedback.security.DeviceIdentityStore
 import java.security.SecureRandom
 
 /**
- * Locally signed pairing proof (`feedback-pairing-v1`, protocol/PROTOCOL.md section 4.3).
+ * Locally signed pairing proof (`feedback-pairing-v1`, protocol/PROTOCOL.md section 4.4).
  *
  * This is the offline/diagnosis path and explicitly not an online usable ticket. Online pairing
  * runs through `pairing/start` and `pairing/{id}/claim`.

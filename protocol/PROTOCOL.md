@@ -80,7 +80,21 @@ feedback-pairing-claim-v1
 <issuedAtEpochMillis>
 ```
 
-### 4.3 `feedback-pairing-v1` (lokaler Nachweis, Bestand)
+### 4.3 `feedback-server-identity-v1`
+
+```text
+feedback-server-identity-v1
+<deviceId>
+<nonceBase64Url>
+<serverPublicKeyBase64>
+<issuedAtEpochMillis>
+```
+
+Die einzige Nutzlast, die der **Server** signiert. `deviceId` bindet den Nachweis an das fragende
+Geraet, `nonce` an genau diese eine Frage, und der Schluessel steht mit drin, damit eine Signatur
+nie als Aussage ueber einen anderen Schluessel gelesen werden kann.
+
+### 4.4 `feedback-pairing-v1` (lokaler Nachweis, Bestand)
 
 Der bereits vorhandene lokale Nachweis bleibt als Offline-/Diagnosepfad erhalten:
 
@@ -160,6 +174,7 @@ Basis: `/api/v1`. Antwortformat bei Fehlern immer:
 | `POST` | `/pairing/start` | keine (signiert) | Pairing eroeffnen |
 | `POST` | `/pairing/{pairingId}/status` | `deviceSecret` im Body | Status abfragen |
 | `POST` | `/pairing/{pairingId}/claim` | `deviceSecret` + Signatur | Geraete-Token einmalig abholen |
+| `POST` | `/agent/server-identity` | keine | Der Server weist nach, welcher Server er ist |
 | `GET` | `/agent/me` | `Bearer <deviceToken>` | Registrierung und Capability-Stand pruefen |
 | `GET` | `/agent/ws` | `Bearer <deviceToken>` | Presence-/Protokoll-WebSocket |
 
@@ -222,12 +237,63 @@ Antwort `200`:
   "deviceToken": "<base64url, 32 Bytes>",
   "device": { "id": "<uuid>", "deviceId": "fb-...", "name": "Galaxy S24", "pairedAt": "..." },
   "capabilities": { "granted": [], "requested": [] },
+  "serverPublicKey": "<base64, SPKI DER, EC P-256>",
   "serverTime": "2026-09-13T11:23:20.000Z"
 }
 ```
 
+`serverPublicKey` ist **Trust on first use**: dies ist der eine Moment, in dem das Geraet erfaehrt,
+zu welchem Server es gehoert. Es speichert den Schluessel neben dem Geraete-Token und laesst sich
+ihn danach vor jedem Verbindungsaufbau nachweisen (6.1, `POST /agent/server-identity`). Ein
+Geraet, dessen Registrierung diesen Schluessel nicht enthaelt, koppelt neu statt ungeprueft zu
+verbinden.
+
+Der Schluessel ist **kein** Geheimnis - er ist oeffentlich und wird von jedem beantworteten
+Nachweis mitgeliefert. Was er leistet, ist etwas anderes: die Server-Identitaet haengt damit nicht
+mehr an der Adresse. Wer die Adresse erbt, erbt den Schluessel nicht.
+
 Nach `claim` ist die Pairing-Session `consumed`. Geht die Antwort verloren, muss das Geraet
 neu koppeln; ein zweiter `claim` wird mit `PAIRING_ALREADY_USED` abgelehnt.
+
+#### `POST /agent/server-identity`
+
+```json
+{ "deviceId": "fb-...", "nonce": "<base64url, >= 16 Zeichen>" }
+```
+
+Antwort `200`:
+
+```json
+{
+  "version": 1,
+  "serverPublicKey": "<base64, SPKI DER, EC P-256>",
+  "issuedAt": 1700000000000,
+  "signature": "<base64url, ECDSA/SHA-256, DER>"
+}
+```
+
+**Bewusst ohne Authentisierung.** Es ist die Anfrage, die das Geraet als **erste** stellt - vor
+dem WebSocket, vor `/agent/me`, vor allem, was den `deviceToken` mitschickt. Ueberall sonst weist
+sich das Geraet aus und der Server nicht: der Token steht als `Bearer`-Header schon im
+Upgrade-Request. Waere hier ein Token noetig, muesste das Geraet ihn abgeben, bevor es weiss, wem.
+
+Beide Richtungen tragen deshalb kein Geheimnis: das Geraet nennt nur seine ohnehin oeffentliche
+`deviceId`, der Server seinen ohnehin oeffentlichen Schluessel.
+
+Regeln:
+
+- Die Signatur geht ueber `feedback-server-identity-v1` (4.3) mit genau diesen Werten.
+- Die Antwort ist fuer ein bekanntes und ein unbekanntes Geraet **identisch**. Der Endpunkt sagt,
+  wer der Server ist, nicht wen er kennt - ein Unterschied waere ein Orakel dafuer, ob ein
+  bestimmtes Geraet hier gekoppelt ist.
+- Das Geraet vergleicht den gelieferten Schluessel **zuerst** mit dem gespeicherten und prueft die
+  Signatur dann gegen den **gespeicherten**, nie gegen den gelieferten. Gegen den gelieferten zu
+  pruefen wuerde immer gelingen: ein Hochstapler signiert seinen eigenen Schluessel einwandfrei.
+- Stimmt etwas nicht, sendet das Geraet nichts weiter und versucht es nicht erneut. Ein
+  wiederholter Versuch hilft nicht - unter der Adresse ist jemand anderes.
+
+`protocol/fixtures/server-identity-v1.json` enthaelt einen echten Nachweis und zwei Ablehnungen,
+erzeugt vom Server und gelesen von beiden Seiten.
 
 ### 6.2 Control Center (Cookie-Session)
 
