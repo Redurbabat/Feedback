@@ -1420,7 +1420,9 @@ class FeedbackController(
             )
             return
         }
-        if (connectionState == AgentConnectionState.REVOKED) {
+        if (connectionState == AgentConnectionState.REVOKED ||
+            connectionState == AgentConnectionState.PAIRING_ENDED
+        ) {
             backgroundStore.setEnabled(false)
             localCapabilityStore.clear()
             _state.value = _state.value.copy(
@@ -1432,7 +1434,15 @@ class FeedbackController(
                 agentState = connectionState,
                 backgroundConnectionEnabled = false,
                 systemInfoGrantedLocally = false,
-                globalMessage = "Dieses Gerät wurde im Control Center widerrufen.",
+                // Two different sentences on purpose. Both end the pairing, but only one of them
+                // is something the owner did, and telling them they revoked a device they never
+                // touched sends them looking for a mistake that was never made.
+                globalMessage = if (connectionState == AgentConnectionState.REVOKED) {
+                    "Dieses Gerät wurde im Control Center widerrufen."
+                } else {
+                    "Der Server nimmt die Anmeldung dieses Geräts nicht mehr an. Das passiert, " +
+                        "wenn ein Gerät sehr lange nicht verbunden war. Koppele es einfach neu."
+                },
             )
         } else {
             _state.value = _state.value.copy(agentState = connectionState)

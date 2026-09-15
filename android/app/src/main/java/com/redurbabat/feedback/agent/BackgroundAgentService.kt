@@ -149,7 +149,11 @@ class BackgroundAgentService : Service() {
                     AgentConnectionState.ERROR,
                     -> scheduleReconnect(next)
 
-                    AgentConnectionState.REVOKED -> {
+                    // Both end the pairing, and neither can be fixed by trying again. The
+                    // difference between them is what the owner is told, not what happens here.
+                    AgentConnectionState.REVOKED,
+                    AgentConnectionState.PAIRING_ENDED,
+                    -> {
                         backgroundStore.setEnabled(false)
                         localCapabilities.clear()
                         reconnectJob?.cancel()
@@ -268,6 +272,7 @@ class BackgroundAgentService : Service() {
         AgentConnectionState.OFFLINE -> "Offline · erneuter Verbindungsversuch folgt"
         AgentConnectionState.UNTRUSTED_SERVER -> "Server nicht wiedererkannt · Verbindung gestoppt"
         AgentConnectionState.REVOKED -> "Gerät wurde widerrufen"
+        AgentConnectionState.PAIRING_ENDED -> "Kopplung beendet · bitte neu koppeln"
         AgentConnectionState.ERROR -> "Verbindungsfehler · erneuter Versuch folgt"
     }
 

@@ -175,6 +175,7 @@ Basis: `/api/v1`. Antwortformat bei Fehlern immer:
 | `POST` | `/pairing/{pairingId}/status` | `deviceSecret` im Body | Status abfragen |
 | `POST` | `/pairing/{pairingId}/claim` | `deviceSecret` + Signatur | Geraete-Token einmalig abholen |
 | `POST` | `/agent/server-identity` | keine | Der Server weist nach, welcher Server er ist |
+| `POST` | `/agent/token` | `Bearer <deviceToken>` | Token austauschen, wenn er alt genug ist |
 | `GET` | `/agent/me` | `Bearer <deviceToken>` | Registrierung und Capability-Stand pruefen |
 | `GET` | `/agent/ws` | `Bearer <deviceToken>` | Presence-/Protokoll-WebSocket |
 
@@ -294,6 +295,44 @@ Regeln:
 
 `protocol/fixtures/server-identity-v1.json` enthaelt einen echten Nachweis und zwei Ablehnungen,
 erzeugt vom Server und gelesen von beiden Seiten.
+
+#### `POST /agent/token`
+
+Leerer Body. Antwort `200`, einer von zwei Faellen:
+
+```json
+{ "version": 1, "rotated": false }
+```
+
+```json
+{
+  "version": 1,
+  "rotated": true,
+  "deviceToken": "<base64url, 32 Bytes>",
+  "expiresAt": "2026-12-14T09:00:00.000Z"
+}
+```
+
+Das Geraet stellt diese Anfrage **bei jedem Verbindungsaufbau**, direkt nach dem Identitaetsnachweis
+und **vor** dem WebSocket. Ob der Token faellig ist, entscheidet der **Server**: eine Uhr, die um
+eine Woche falsch geht, wuerde ein Geraet sonst bei jedem Reconnect rotieren lassen oder nie.
+
+Regeln (THREAT_MODEL 4.13):
+
+- Faellig ist ein Token ab einem Alter von `DEVICE_TOKEN_ROTATE_AFTER_MS`. Vorher passiert nichts.
+- Eine Rotation erzeugt einen Nachfolger mit `DEVICE_TOKEN_TTL_MS` Laufzeit und traegt ihn beim
+  Vorgaenger ein. Alle anderen lebenden Token des Geraets werden dabei widerrufen.
+- Der **Vorgaenger bleibt gueltig, solange der Nachfolger unbenutzt ist** - ohne Zeitfenster. Die
+  Antwort kann verloren gehen, und ein Geraet, das den neuen Token nie gesehen hat, hat nur noch
+  den alten. Ein Zeitfenster wuerde genau dieses Geraet aussperren.
+- Wird der Vorgaenger benutzt, **nachdem** der Nachfolger benutzt wurde, halten zwei Parteien
+  dieselbe Kette. Der Server kann nicht wissen, welche davon das Geraet ist: die Kopplung wird
+  beendet (`DEVICE_REVOKED`, Audit-Ereignis `device.token.reuse`), fuer **beide** Seiten.
+- Das Geraet speichert einen neuen Token, **bevor** es ihn benutzt. Ein benutzter, aber nicht
+  gespeicherter Token ist der einzige Weg, sich selbst auszusperren: mit seiner ersten Benutzung
+  stirbt der alte.
+- `401` heisst, der Token wird nicht mehr angenommen (abgelaufen); `403 DEVICE_REVOKED` heisst, die
+  Kopplung ist beendet. Beide sind endgueltig, keiner wird wiederholt.
 
 ### 6.2 Control Center (Cookie-Session)
 
@@ -1008,6 +1047,8 @@ unterschieden, solange das die Brute-Force-Analyse erleichtern wuerde.
 | `PAIRING_TTL_MS` | 300000 |
 | `PAIRING_MAX_LOOKUP_ATTEMPTS` | 5 |
 | `CLOCK_SKEW_MS` | 120000 |
+| `DEVICE_TOKEN_TTL_MS` | 7776000000 |
+| `DEVICE_TOKEN_ROTATE_AFTER_MS` | 604800000 |
 | `CONTROL_ELEVATION_TTL_MS` | 300000 |
 | `NONCE_RETENTION_MS` | 900000 |
 | `REMOTE_SESSION_TTL_MS` | 60000 |

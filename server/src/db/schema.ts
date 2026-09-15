@@ -83,10 +83,13 @@ export const deviceTokens = sqliteTable(
     expiresAt: integer('expires_at'),
     lastUsedAt: integer('last_used_at'),
     revokedAt: integer('revoked_at'),
+    replacedAt: integer('replaced_at'),
+    replacedBy: text('replaced_by'),
   },
   (table) => [
     uniqueIndex('device_tokens_token_hash_unique').on(table.tokenHash),
     index('device_tokens_device_idx').on(table.deviceId),
+    index('device_tokens_replaced_by_idx').on(table.replacedBy),
   ],
 );
 

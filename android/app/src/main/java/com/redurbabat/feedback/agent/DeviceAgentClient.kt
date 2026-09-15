@@ -7,6 +7,7 @@ import com.redurbabat.feedback.files.FilesRequestHandler
 import com.redurbabat.feedback.files.OutgoingFileMessage
 import com.redurbabat.feedback.network.ServerEndpoint
 import com.redurbabat.feedback.pairing.DeviceMetadata
+import com.redurbabat.feedback.pairing.DeviceRegistration
 import com.redurbabat.feedback.permissions.LocalCapabilityStore
 import com.redurbabat.feedback.protocol.Capability
 import com.redurbabat.feedback.protocol.EffectivePermission
@@ -110,6 +111,16 @@ class DeviceAgentClient(
     @Volatile
     private var serverGranted: Set<Capability> = emptySet()
 
+    /**
+     * The registration as it stands now, not as it was when this client was built.
+     *
+     * The token is replaced from time to time (THREAT_MODEL 4.13), and every later use - the
+     * WebSocket upgrade above all - has to pick up the replacement rather than the one this
+     * object was constructed with.
+     */
+    @Volatile
+    private var registration: DeviceRegistration = storedRegistration.registration
+
     @Volatile
     private var lastAgentActivity: Long = now()
 
@@ -132,12 +143,12 @@ class DeviceAgentClient(
     private fun openSocketIfServerIsTrusted() {
         when (proveServer()) {
             ServerIdentityCheck.Trusted -> {
+                if (!rotateTokenIfDue()) {
+                    return
+                }
                 val request = Request.Builder()
                     .url(storedRegistration.endpoint.webSocket("/api/v1/agent/ws"))
-                    .header(
-                        "Authorization",
-                        "Bearer ${storedRegistration.registration.deviceToken}",
-                    )
+                    .header("Authorization", "Bearer ${registration.deviceToken}")
                     .build()
                 webSocket = client.newWebSocket(request, Listener())
             }
@@ -161,7 +172,7 @@ class DeviceAgentClient(
      * else is there" stay apart: one is retried, the other must not be.
      */
     private fun proveServer(): ServerIdentityCheck? {
-        val registration = storedRegistration.registration
+        val registration = this.registration
         val nonce = CryptoUtils.Base64Url.encode(ByteArray(NONCE_BYTES).also(secureRandom::nextBytes))
         val body = JSONObject()
             .put("deviceId", registration.publicDeviceId)
@@ -192,6 +203,74 @@ class DeviceAgentClient(
                 signatureBase64Url = answer.getString("signature"),
             )
         }.getOrDefault(ServerIdentityCheck.Malformed)
+    }
+
+    /**
+     * Replaces the token when the server says it is due, before the socket is opened.
+     *
+     * Returns false when the connection must not be attempted at all - either because the pairing
+     * is over, or because a new token arrived and could not be stored. That second case matters:
+     * connecting anyway would use a token whose replacement has been issued, and the first use of
+     * the replacement would be the moment this device locked itself out. Not connecting costs a
+     * retry, and the old token stays valid until somebody uses the new one.
+     */
+    private fun rotateTokenIfDue(): Boolean {
+        val request = Request.Builder()
+            .url(storedRegistration.endpoint.api("/api/v1/agent/token"))
+            .header("Authorization", "Bearer ${registration.deviceToken}")
+            .post("{}".toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+
+        val outcome = runCatching {
+            client.newCall(request).execute().use { response ->
+                TokenRotation.parse(response.code, response.body?.string())
+            }
+        }.getOrElse { TokenRotationOutcome.Unreachable }
+
+        return when (outcome) {
+            TokenRotationOutcome.NotDue -> true
+
+            // A server that answers something this version cannot read is a reason to keep the
+            // credential that works, not to discard it.
+            TokenRotationOutcome.Malformed -> true
+
+            is TokenRotationOutcome.Rotated -> storeRotatedToken(outcome.deviceToken)
+
+            TokenRotationOutcome.Revoked -> {
+                registrationStore.clear()
+                _state.value = AgentConnectionState.REVOKED
+                false
+            }
+
+            TokenRotationOutcome.Rejected -> {
+                registrationStore.clear()
+                _state.value = AgentConnectionState.PAIRING_ENDED
+                false
+            }
+
+            TokenRotationOutcome.Unreachable -> {
+                _state.value = AgentConnectionState.OFFLINE
+                false
+            }
+        }
+    }
+
+    /**
+     * Writes the replacement down before it is used anywhere.
+     *
+     * The order is the whole point. A token that has been used but not stored is one this device
+     * can never present again, and the old one dies at exactly that first use.
+     */
+    private fun storeRotatedToken(deviceToken: String): Boolean {
+        val updated = registration.copy(deviceToken = deviceToken)
+        return runCatching {
+            registrationStore.save(storedRegistration.endpoint, updated)
+            registration = updated
+            true
+        }.getOrElse {
+            _state.value = AgentConnectionState.OFFLINE
+            false
+        }
     }
 
     /**

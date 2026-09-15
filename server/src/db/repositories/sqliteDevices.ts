@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { and, asc, eq, gt, isNull, or } from 'drizzle-orm';
+import { and, asc, eq, isNull, notInArray } from 'drizzle-orm';
 
 import type { Db } from '../client.js';
 import { deviceTokens, devices } from '../schema.js';
@@ -43,6 +43,8 @@ function toToken(row: TokenRow): DeviceTokenRecord {
     expiresAt: row.expiresAt,
     lastUsedAt: row.lastUsedAt,
     revokedAt: row.revokedAt,
+    replacedAt: row.replacedAt,
+    replacedBy: row.replacedBy,
   };
 }
 
@@ -128,6 +130,7 @@ export class SqliteDeviceTokenRepository implements DeviceTokenRepository {
     deviceId: string;
     tokenHash: string;
     expiresAt?: number | undefined;
+    createdAt?: number | undefined;
   }): Promise<DeviceTokenRecord> {
     const row = this.db
       .insert(deviceTokens)
@@ -135,32 +138,62 @@ export class SqliteDeviceTokenRepository implements DeviceTokenRepository {
         id: randomUUID(),
         deviceId: input.deviceId,
         tokenHash: input.tokenHash,
-        createdAt: Date.now(),
+        createdAt: input.createdAt ?? Date.now(),
         expiresAt: input.expiresAt ?? null,
         lastUsedAt: null,
         revokedAt: null,
+        replacedAt: null,
+        replacedBy: null,
       })
       .returning()
       .get();
     return toToken(row);
   }
 
-  async findActiveByTokenHash(
-    tokenHash: string,
-    now: number,
-  ): Promise<DeviceTokenRecord | undefined> {
+  /*
+   * Returns the row as it is, revoked or expired or superseded. Whether it may be used is decided
+   * by `decideDeviceToken`, which needs to tell "no such token" from "a token whose successor has
+   * already been used" - a filter here would collapse the two into the same undefined.
+   */
+  async findByTokenHash(tokenHash: string): Promise<DeviceTokenRecord | undefined> {
     const row = this.db
       .select()
       .from(deviceTokens)
-      .where(
-        and(
-          eq(deviceTokens.tokenHash, tokenHash),
-          isNull(deviceTokens.revokedAt),
-          or(isNull(deviceTokens.expiresAt), gt(deviceTokens.expiresAt, now)),
-        ),
-      )
+      .where(eq(deviceTokens.tokenHash, tokenHash))
       .get();
     return row === undefined ? undefined : toToken(row);
+  }
+
+  async findById(id: string): Promise<DeviceTokenRecord | undefined> {
+    const row = this.db.select().from(deviceTokens).where(eq(deviceTokens.id, id)).get();
+    return row === undefined ? undefined : toToken(row);
+  }
+
+  async markReplaced(input: { id: string; replacedBy: string; at: number }): Promise<void> {
+    this.db
+      .update(deviceTokens)
+      .set({ replacedAt: input.at, replacedBy: input.replacedBy })
+      .where(eq(deviceTokens.id, input.id))
+      .run();
+  }
+
+  async revokeOthersForDevice(
+    deviceId: string,
+    keepIds: readonly string[],
+    at: number,
+  ): Promise<number> {
+    const result = this.db
+      .update(deviceTokens)
+      .set({ revokedAt: at })
+      .where(
+        and(
+          eq(deviceTokens.deviceId, deviceId),
+          isNull(deviceTokens.revokedAt),
+          notInArray(deviceTokens.id, [...keepIds]),
+        ),
+      )
+      .run();
+    return result.changes;
   }
 
   async revokeAllForDevice(deviceId: string, at: number): Promise<number> {

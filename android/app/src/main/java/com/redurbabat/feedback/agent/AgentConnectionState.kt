@@ -16,5 +16,14 @@ enum class AgentConnectionState {
      */
     UNTRUSTED_SERVER,
     REVOKED,
+
+    /**
+     * The server no longer accepts this device's token, without having revoked the device.
+     *
+     * In practice that means the token ran out - a device that has not connected for months
+     * (THREAT_MODEL 4.13). Terminal like [REVOKED], and kept apart from it for one reason: the
+     * app would otherwise tell the owner they revoked something they never touched.
+     */
+    PAIRING_ENDED,
     ERROR,
 }

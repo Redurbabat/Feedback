@@ -276,6 +276,16 @@ ausfuehrlich benannt:
   Anhebung haelt bis zu fuenf Minuten - ein Angreifer, der genau dann uebernimmt, findet sie
   offen vor. Feedback hat keinen zweiten Faktor; das hier ersetzt keinen.
 
+- ~~**Ein gestohlener `deviceToken` gilt bis zum Widerruf.**~~ **Verringert.** Die Token bilden
+  jetzt eine Kette (`POST /agent/token`): das Geraet tauscht seinen Token beim Verbindungsaufbau
+  aus, sobald er alt genug ist, und ein Token ohne Rotation laeuft ab. Wichtiger als die
+  Lebensdauer ist die Erkennung - benutzt jemand einen Vorgaenger, nachdem der Nachfolger benutzt
+  wurde, halten zwei Parteien dieselbe Kette, und die Kopplung endet fuer beide.
+
+  Was offen bleibt: wer den aktuellen Token stiehlt und ihn benutzt, ohne zu rotieren, faellt erst
+  bei der naechsten Rotation des echten Geraets auf. Und die Erkennung kostet eine Neukopplung -
+  der Server beendet die Kopplung, weil er die beiden Halter nicht unterscheiden kann.
+
 ## 7. Naechster konkreter Schritt
 
 Ein erster Durchlauf gegen ein echtes Geraet nach `docs/deployment/BETRIEB.md`.

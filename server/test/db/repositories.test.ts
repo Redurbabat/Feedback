@@ -123,12 +123,14 @@ describe('migrations and repository layer', () => {
 
     const tokenHash = sha256Hex(randomBytes(32).toString('base64url'));
     await repositories.deviceTokens.create({ deviceId: device.id, tokenHash });
-    expect(await repositories.deviceTokens.findActiveByTokenHash(tokenHash, Date.now())).toBeDefined();
+    expect((await repositories.deviceTokens.findByTokenHash(tokenHash))?.revokedAt).toBeNull();
 
     expect(await repositories.deviceTokens.revokeAllForDevice(device.id, Date.now())).toBe(1);
+    // The row stays readable after the revocation - the lookup reports what is stored, and
+    // whether it may be used is decided a layer up.
     expect(
-      await repositories.deviceTokens.findActiveByTokenHash(tokenHash, Date.now()),
-    ).toBeUndefined();
+      (await repositories.deviceTokens.findByTokenHash(tokenHash))?.revokedAt,
+    ).not.toBeNull();
   });
 
   it('never resolves an ambiguous display code', async () => {

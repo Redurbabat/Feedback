@@ -20,6 +20,9 @@ export const AUDIT_EVENT_TYPES = [
   'pairing.claim',
   'device.capabilities.update',
   'device.revoke',
+  /** A device token chain was presented by two parties (THREAT_MODEL 4.13). */
+  'device.token.reuse',
+  'device.token.rotate',
   'system.info.request',
   'files.session.open',
   'file.transfer.started',

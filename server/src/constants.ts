@@ -19,6 +19,24 @@ export const CLOCK_SKEW_MS = 120_000;
  * is also the window a stolen session would have to land in (THREAT_MODEL 4.5).
  */
 export const CONTROL_ELEVATION_TTL_MS = 300_000;
+/**
+ * How long a device token stays valid without being rotated (THREAT_MODEL 4.13).
+ *
+ * Every rotation issues a fresh one with a fresh window, so a device that connects keeps working
+ * indefinitely. The limit bites only for a device that has not been seen for three months - and
+ * that is the case where a token still lying around somewhere should stop working.
+ */
+export const DEVICE_TOKEN_TTL_MS = 7_776_000_000;
+
+/**
+ * How old a device token may get before the next connection replaces it.
+ *
+ * Shorter than the lifetime by a wide margin, so a device that connects even occasionally always
+ * rotates long before its token could expire. This is also the upper bound on how long a stolen
+ * copy stays useful once the real device connects again.
+ */
+export const DEVICE_TOKEN_ROTATE_AFTER_MS = 604_800_000;
+
 export const NONCE_RETENTION_MS = 900_000;
 export const REMOTE_SESSION_TTL_MS = 60_000;
 export const AGENT_REQUEST_TIMEOUT_MS = 10_000;

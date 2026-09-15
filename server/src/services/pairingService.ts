@@ -1,5 +1,6 @@
 import {
   CLOCK_SKEW_MS,
+  DEVICE_TOKEN_TTL_MS,
   IMPLEMENTED_CAPABILITIES_V1,
   NONCE_RETENTION_MS,
   PAIRING_MAX_LOOKUP_ATTEMPTS,
@@ -431,9 +432,14 @@ export class PairingService {
     await this.deps.repositories.remoteSessions.revokeAllForDevice(device.id, now);
 
     const deviceToken = randomToken(SECRET_BYTES);
+    // A lifetime from the first token on (THREAT_MODEL 4.13). Every rotation renews it, so a
+    // device that connects is never caught by it; what it catches is a token from a pairing
+    // nobody has used in three months.
     await this.deps.repositories.deviceTokens.create({
       deviceId: device.id,
       tokenHash: sha256Hex(deviceToken),
+      createdAt: now,
+      expiresAt: now + DEVICE_TOKEN_TTL_MS,
     });
 
     await this.deps.repositories.pairingSessions.markConsumed(session.id, now);

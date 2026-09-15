@@ -13,6 +13,15 @@ object ProtocolConstants {
      * ist - wie PAIRING_MAX_LOOKUP_ATTEMPTS, das auf dem Geraet ebenfalls nichts tut.
      */
     const val CONTROL_ELEVATION_TTL_MS = 300_000L
+    /**
+     * Wie lange ein Geraete-Token ohne Rotation gilt (THREAT_MODEL 4.13). Jede Rotation setzt das
+     * Fenster neu; ein Geraet, das sich verbindet, laeuft nie hinein.
+     */
+    const val DEVICE_TOKEN_TTL_MS = 7_776_000_000L
+
+    /** Ab diesem Alter tauscht die naechste Verbindung den Token aus. */
+    const val DEVICE_TOKEN_ROTATE_AFTER_MS = 604_800_000L
+
     const val NONCE_RETENTION_MS = 900_000L
     const val REMOTE_SESSION_TTL_MS = 60_000L
     const val HEARTBEAT_INTERVAL_MS = 30_000L

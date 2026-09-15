@@ -3,13 +3,16 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
+import { rotationDue } from '../../auth/deviceTokenPolicy.js';
 import {
   CLOCK_SKEW_MS,
+  DEVICE_TOKEN_TTL_MS,
   HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_MISS_LIMIT,
   IMPLEMENTED_CAPABILITIES_V1,
   MAX_FRAME_BYTES,
   PROTOCOL_VERSION,
+  SECRET_BYTES,
 } from '../../constants.js';
 import type { AppContext } from '../../context.js';
 import type { ErrorCode } from '../../errors.js';
@@ -34,6 +37,7 @@ import {
 } from '../../protocol/wire.js';
 import { DEVICE_ID_PATTERN } from '../../crypto/deviceIdentity.js';
 import { serverIdentityPayload } from '../../crypto/serverIdentity.js';
+import { randomToken, sha256Hex } from '../../crypto/tokens.js';
 import { requireDevicePrincipal, requireDeviceToken } from '../deviceAuth.js';
 import { parseOrThrow } from '../validation.js';
 
@@ -176,6 +180,61 @@ export async function registerAgentRoutes(
       };
     },
   );
+
+  /*
+   * The device replacing its own token (THREAT_MODEL 4.13).
+   *
+   * Called once per connection, before the socket is opened. Most of the time the answer is
+   * "not yet" and nothing changes; the point of asking every time is that the device never has to
+   * work out whether it is due. A phone whose clock is a week off would otherwise either rotate on
+   * every reconnect or never rotate at all, and only the server has a clock worth trusting here.
+   *
+   * The reply carries the new secret exactly once. The device stores it BEFORE it opens the
+   * socket, and the old token stays usable until the new one is used - so an answer lost on the
+   * way costs a retry, never the pairing.
+   */
+  app.post('/agent/token', { config: { rateLimit: 'apiDefault' } }, async (request) => {
+    const principal = await requireDeviceToken(context, request);
+    const now = context.clock.now();
+
+    if (!rotationDue(principal.token, now)) {
+      return { version: PROTOCOL_VERSION, rotated: false };
+    }
+
+    const deviceToken = randomToken(SECRET_BYTES);
+    const issued = await context.repositories.deviceTokens.create({
+      deviceId: principal.device.id,
+      tokenHash: sha256Hex(deviceToken),
+      createdAt: now,
+      expiresAt: now + DEVICE_TOKEN_TTL_MS,
+    });
+    await context.repositories.deviceTokens.markReplaced({
+      id: principal.token.id,
+      replacedBy: issued.id,
+      at: now,
+    });
+    // Everything except the presented token and its brand new successor. A rotation whose answer
+    // was lost leaves a successor nobody picked up; without this the device would trail a row of
+    // tokens that all still work.
+    await context.repositories.deviceTokens.revokeOthersForDevice(
+      principal.device.id,
+      [principal.token.id, issued.id],
+      now,
+    );
+
+    await context.audit.record({
+      eventType: 'device.token.rotate',
+      result: 'success',
+      deviceId: principal.device.deviceId,
+    });
+
+    return {
+      version: PROTOCOL_VERSION,
+      rotated: true,
+      deviceToken,
+      expiresAt: toIso(now + DEVICE_TOKEN_TTL_MS),
+    };
+  });
 
   app.get('/agent/me', async (request) => {
     const principal = await requireDeviceToken(context, request);

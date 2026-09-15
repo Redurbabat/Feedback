@@ -18,6 +18,7 @@ import {
   AgentOfflineError,
   AgentRequestTimeoutError,
 } from '../../services/agentConnections.js';
+import { revokeDevice } from '../../services/deviceRevocation.js';
 import {
   agentFrame,
   grantedCapabilities,
@@ -291,28 +292,11 @@ export async function registerDeviceRoutes(
     const device = await requireOwnedDevice(context, principal.user.id, params.id);
     const now = context.clock.now();
 
-    context.agentConnections.sendToDevice(
-      device.id,
-      agentFrame('device.revoked', { reason: 'revoked_by_owner' }, now),
-    );
-
-    await context.repositories.devices.revoke(device.id, now);
-    await context.repositories.deviceTokens.revokeAllForDevice(device.id, now);
-    await context.repositories.remoteSessions.revokeAllForDevice(device.id, now);
-    await context.repositories.deviceCapabilities.clearForDevice(device.id);
-    // Stop the bytes before closing the socket: a transfer in flight must not keep
-    // delivering a file from a device that was just revoked.
-    context.fileTransfers.cancelForDevice(device.id, 'device_revoked', 'Geraet wurde widerrufen');
-    // Same reason for the picture: a revoked device must stop capturing before its
-    // socket closes, not when the stream happens to time out.
-    context.screenStreams.stopForDevice(device.id, 'device_revoked', 'Geraet wurde widerrufen');
-    context.agentConnections.closeDevice(device.id, 4003, 'device revoked');
-
-    await context.audit.record({
-      eventType: 'device.revoke',
-      result: 'success',
+    await revokeDevice(context, {
+      device,
+      reason: 'revoked_by_owner',
+      now,
       userId: principal.user.id,
-      deviceId: device.deviceId,
     });
 
     return {

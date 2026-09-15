@@ -248,8 +248,27 @@ serverseitig freigeben.
 ueber WSS; der Token wird nur gehasht gespeichert und in konstanter Zeit verglichen. Die
 Control-Center-Verbindung haengt an der Cookie-Sitzung mit Origin-Pruefung. Presence-Nachrichten
 duerfen keine `sessionId` tragen; privilegierte Nachrichten ohne gueltige Session werden abgelehnt.
-**Residual** Ein gestohlener `deviceToken` ist eine vollstaendige Uebernahme der Geraeterolle bis
-zum Widerruf. Es gibt **keine Token-Rotation** - das ist offen.
+Dazu die **Rotation** (PROTOCOL 6.1, `POST /agent/token`). Jedes Geraet bildet eine Token-Kette:
+ab `DEVICE_TOKEN_ROTATE_AFTER_MS` tauscht die naechste Verbindung den Token aus, der Vorgaenger
+bleibt gueltig, bis der Nachfolger zum ersten Mal benutzt wird, und ein Token ohne Rotation laeuft
+nach `DEVICE_TOKEN_TTL_MS` ab.
+
+Der eigentliche Gewinn ist nicht die kuerzere Lebensdauer, sondern dass ein Diebstahl **auffaellt**.
+Eine Kopie und das Geraet koennen nicht beide der aktuelle Halter sein: sobald der eine den
+Nachfolger benutzt hat und der andere mit dem Vorgaenger kommt, weiss der Server, dass zwei
+Parteien dieselbe Kette halten. Welche davon das Geraet ist, weiss er nicht - deshalb endet die
+Kopplung fuer beide, mit dem Audit-Ereignis `device.token.reuse`.
+
+Kein Zeitfenster auf dem Vorgaenger, und das ist Absicht: die Antwort mit dem neuen Token kann
+verloren gehen, und ein Geraet, das ihn nie gesehen hat, hat nur den alten. Was den Vorgaenger
+beendet, ist nicht Zeit, sondern der Beweis, dass jemand den Nachfolger bekommen hat.
+
+**Residual** Verringert, nicht beseitigt. Wer den aktuellen Token stiehlt und ihn benutzt, **ohne**
+zu rotieren, faellt erst auf, wenn das echte Geraet das naechste Mal rotiert - bis dahin, hoechstens
+`DEVICE_TOKEN_ROTATE_AFTER_MS` nach dessen naechster Verbindung, liest er mit. Und die Erkennung
+kostet im Ernstfall eine Neukopplung: der Server beendet die Kopplung, weil er die beiden Halter
+nicht unterscheiden kann, nicht weil er den Dieb erkannt haette. Ein Geraet, das nie wieder
+verbindet, rotiert auch nie - dort begrenzt allein der Ablauf.
 
 ### 4.14 Umgehung der Rate Limits
 

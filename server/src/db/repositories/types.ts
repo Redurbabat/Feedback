@@ -121,6 +121,10 @@ export interface DeviceTokenRecord {
   readonly expiresAt: number | null;
   readonly lastUsedAt: number | null;
   readonly revokedAt: number | null;
+  /** When a successor was issued, or null while this is the device's current token. */
+  readonly replacedAt: number | null;
+  /** The successor's id. Null exactly when `replacedAt` is null. */
+  readonly replacedBy: string | null;
 }
 
 export interface DeviceTokenRepository {
@@ -128,10 +132,22 @@ export interface DeviceTokenRepository {
     deviceId: string;
     tokenHash: string;
     expiresAt?: number | undefined;
+    createdAt?: number | undefined;
   }): Promise<DeviceTokenRecord>;
-  findActiveByTokenHash(tokenHash: string, now: number): Promise<DeviceTokenRecord | undefined>;
+  /** Looks the token up by hash without judging it - see `decideDeviceToken`. */
+  findByTokenHash(tokenHash: string): Promise<DeviceTokenRecord | undefined>;
+  findById(id: string): Promise<DeviceTokenRecord | undefined>;
   revokeAllForDevice(deviceId: string, at: number): Promise<number>;
   touch(id: string, at: number): Promise<void>;
+  /** Points a token at its successor. */
+  markReplaced(input: { id: string; replacedBy: string; at: number }): Promise<void>;
+  /**
+   * Revokes every live token of this device except the ones named.
+   *
+   * Used by a rotation to clean up successors that were issued but never picked up, so a device
+   * never accumulates a tail of usable tokens behind it.
+   */
+  revokeOthersForDevice(deviceId: string, keepIds: readonly string[], at: number): Promise<number>;
 }
 
 export interface PairingSessionRecord {

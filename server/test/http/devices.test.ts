@@ -231,7 +231,11 @@ describe('device and agent routes', () => {
         url: '/api/v1/agent/me',
         headers: { authorization: `Bearer ${provisioned.token}` },
       });
-      expect(agent.statusCode).toBe(401);
+      // DEVICE_REVOKED, not a bare 401. Whoever presents this token held a valid one, so naming
+      // the reason gives nothing away - and a device that was offline during the revocation
+      // learns from the answer that it should stop retrying and clear its registration.
+      expect(agent.statusCode).toBe(403);
+      expect((agent.json() as { error: { code: string } }).error.code).toBe('DEVICE_REVOKED');
 
       const audit = await harness.app.inject({
         method: 'GET',
