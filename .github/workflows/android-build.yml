@@ -40,13 +40,19 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # packages: "" schaltet die Standardinstallation der Action ab. Sie verlangt sonst das
+      # Paket "tools", das Google seit Langem abgekuendigt hat und inzwischen nicht mehr
+      # ausliefert - sdkmanager bricht dann mit "Failed to find package 'tools'" ab, und zwar
+      # unabhaengig davon, was im Quelltext steht. Was dieser Build wirklich braucht, steht
+      # ohnehin im naechsten Schritt, und zwar an genau einer Stelle.
       - name: Set up current Android SDK tools
         uses: android-actions/setup-android@v3
         with:
           cmdline-tools-version: "15859902"
+          packages: ""
 
       - name: Install Android SDK
-        run: sdkmanager "platforms;android-36.1" "build-tools;36.0.0"
+        run: sdkmanager "platforms;android-36.1" "build-tools;36.0.0" "platform-tools"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
