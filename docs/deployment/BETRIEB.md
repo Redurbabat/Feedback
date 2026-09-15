@@ -18,13 +18,27 @@ einen erreichbaren Server:
 | Kopplung im Control Center bestaetigen oder ablehnen | fertig |
 | Geraet erscheint online, Presence und "zuletzt gesehen" | fertig |
 | Hintergrundverbindung ein- und ausschalten | fertig |
+| Nach einem Neustart des Handys verbindet sich die App ohne Oeffnen wieder | fertig |
 | `system.info` freigeben und live abfragen | fertig |
-| Capability entziehen, Geraet widerrufen | fertig |
 | Dateibereiche auf dem Geraet freigeben und entziehen | fertig |
+| Freigegebene Dateien im Browser durchsuchen und herunterladen | fertig |
+| Fotos und Videos ueber Androids Auswahl freigeben und im Browser ansehen | fertig |
+| Bildschirm uebertragen (`screen.view`), beide Zustimmungen, Stop | fertig |
+| Freigeben im Control Center verlangt das Kontopasswort, Entziehen nicht | fertig |
+| Capability entziehen, Geraet widerrufen | fertig |
+| Kopplung ohne Tippen ueber einen Einrichtungslink | fertig, braucht 3.6 |
 
-**Noch nicht testbar:** die freigegebenen Dateien im Browser durchsuchen und herunterladen.
-Das Geraet kann antworten, aber der Server hat die Files-Endpunkte noch nicht
-(`docs/roadmap/OPEN_WORK.md` Abschnitt 2.2) und das Control Center keinen Dateien-Tab (2.3).
+Zwei Dinge laufen mit, ohne dass man sie anklicken kann - sie fallen nur auf, wenn sie fehlen:
+
+- **Der Server weist sich aus.** Vor jeder Verbindung prueft das Geraet den Serverschluessel gegen
+  den, den es beim Koppeln gesehen hat (3.7). Faellt der Test aus, verbindet sich nichts mehr und
+  die App sagt warum.
+- **Der Geraete-Token wird getauscht.** Ab einer Woche Alter holt sich das Geraet beim
+  Verbindungsaufbau einen neuen. Im Test sieht man davon nichts - ausser man laesst ein Handy
+  eine Woche stehen.
+
+**Noch nicht testbar:** nichts aus dieser Liste. Was fehlt, steht in Abschnitt 4 und ist Betrieb,
+nicht Funktion.
 
 ## 2. Was dafuer gebraucht wird
 
@@ -315,15 +329,45 @@ einem Reverse Proxy davor. Zusaetzlich:
 
 ### 3.3 APK aufs Handy
 
-Siehe `ANDROID_RELEASE.md`. Kurz: den Release-Workflow auf `main` laufen lassen und
-`Feedback.apk` direkt auf dem Handy aus dem GitHub-Release laden.
+Zwei Wege. Der erste geht sofort, der zweite ist der richtige.
 
-**Vorher den Signaturschluessel hinterlegen.** Ohne ihn aendert sich die Signatur zwischen
-Builds, Android verlangt vor jedem Update eine Deinstallation - und die loescht den
-Keystore-Schluessel, also Geraeteidentitaet und Kopplung. Beim Testen mit mehreren Builds
-hintereinander ist das der Unterschied zwischen "Update" und "jedes Mal neu koppeln".
+**Sofort: die Debug-APK aus der CI.** Jeder Lauf von `Android Build` haengt `app-debug.apk` als
+Artefakt an (`feedback-debug-apk`, 14 Tage). Auf GitHub unter *Actions* den letzten gruenen Lauf
+oeffnen, das Artefakt herunterladen, entpacken, auf dem Handy installieren (Installation aus
+unbekannter Quelle erlauben). Das reicht, um Abschnitt 3.4 einmal durchzuspielen.
+
+Zwei Dinge, die man dabei wissen muss:
+
+- **Diese APK ist debuggable.** Wer ADB-Zugang zum Handy hat, kann ueber `run-as` das private
+  Datenverzeichnis lesen - ohne Root und ohne die App-Sperre zu kennen. Darin liegt der
+  `deviceToken`, und der genuegt, um als dieses Geraet zu sprechen (Threat Model 4.8). Zum
+  Ausprobieren in Ordnung; nichts, was dauerhaft auf einem Geraet bleiben sollte, das einem
+  wichtig ist.
+- **Die Signatur ist die Android-Standard-Debugsignatur.** Sie ist zwischen Rechnern und Laeufen
+  nicht stabil. Ein spaeteres Update mit einer anders signierten APK verlangt vorher eine
+  Deinstallation - und die loescht den Keystore-Schluessel, also Geraeteidentitaet und Kopplung.
+
+**Richtig: das signierte Release.** Siehe `ANDROID_RELEASE.md`. Der Workflow
+`Android Release` loest auf `main` aus und laesst sich unter *Actions* auch von Hand starten
+(*Run workflow*). Ohne hinterlegten Signaturschluessel faellt er absichtlich auf dieselbe
+Debugsignatur zurueck und sagt es im Releasetext - der Unterschied zwischen "Update" und "jedes
+Mal neu koppeln" entsteht also erst mit dem Schluessel.
+
+Den Schluessel erzeugt und hinterlegt **der Besitzer**, nicht die CI und nicht ein Agent: er ist
+das, was die Identitaet dieser App ausmacht, und wer ihn hat, kann Updates fuer sie
+veroeffentlichen. `ANDROID_RELEASE.md` hat die Befehle.
 
 ### 3.4 Der eigentliche Test
+
+**Vorher, wenn Sie kurz lokal nachsehen wollen.** Der Server laeuft auf `127.0.0.1:8080`, aber die
+Anmeldung dort antwortet mit `FORBIDDEN - Ungueltige Herkunft der Anfrage`, solange in
+`FEEDBACK_ALLOWED_ORIGINS` nur die Tunnel-Adresse steht. Das ist die Origin-Pruefung und kein
+Fehler: der Browser schickt `Origin: http://127.0.0.1:8080`, und diese Herkunft ist nicht erlaubt.
+Wer lokal nachsehen will, traegt sie dort zusaetzlich ein. Am `Secure`-Cookie scheitert es dabei
+nicht - Browser behandeln `localhost` als sichere Herkunft, auch bei `NODE_ENV=production`.
+
+Fuer den Test mit dem Handy aendert das nichts: das Handy kommt ueber die Tunnel-Adresse, und nur
+die muss erlaubt sein.
 
 1. Control Center im Browser oeffnen, anmelden.
 2. App auf dem Handy oeffnen, App-Sperre einrichten, in der Karte "Mit Control Center koppeln"
@@ -340,6 +384,24 @@ hintereinander ist das der Unterschied zwischen "Update" und "jedes Mal neu kopp
    Test fuer Punkt 13.
 8. Geraet im Control Center widerrufen. Die App muss das bemerken und in den Zustand `REVOKED`
    gehen.
+
+Wenn das traegt, dasselbe fuer die uebrigen Faehigkeiten - jede ist zweiseitig, also immer beide
+Seiten freigeben:
+
+9. **Dateien.** Auf dem Handy einen Ordner freigeben, im Control Center `files.read` freigeben,
+   den Dateien-Tab oeffnen, hineinnavigieren, eine Datei herunterladen. Dann auf dem Handy den
+   Bereich entziehen: die offene Sitzung muss enden, nicht bloss leer werden.
+10. **Fotos und Videos.** Ueber Androids Fotoauswahl einzelne Bilder freigeben. Fotos und Videos
+    sind zwei getrennte Schalter - das eine freizugeben darf das andere nicht mitbringen.
+11. **Bildschirm.** Siehe 3.5. Zwei Dialoge, eine sichtbare Benachrichtigung, und der Stop muss
+    sofort wirken.
+12. **Der zweite Schritt.** Beim Freigeben im Control Center fragt die Oberflaeche nach dem
+    Kontopasswort und nennt dabei Geraet und Faehigkeit. Beim **Entziehen** darf sie nicht fragen.
+13. **Neustart.** Das Handy neu starten, ohne die App zu oeffnen. Ist die Hintergrundverbindung
+    eingeschaltet, muss das Geraet von allein wieder online kommen.
+14. **Falscher Server.** Nur wer es genau wissen will: den Tunnel auf einen anderen Server richten,
+    der Feedback ebenfalls laeuft. Die App muss "Server nicht wiedererkannt" melden und **nichts**
+    senden (3.7).
 
 ### 3.5 Bildschirm (`screen.view`)
 
@@ -560,7 +622,8 @@ zu wechseln, ist eine bewusste Neukopplung.
 
 - Der Server wurde in dieser Umgebung nie gegen ein echtes Geraet gestartet.
 - Es gab noch keinen Pairing-Durchlauf mit einem Handy.
-- Der Release-Workflow ist nie gelaufen (er loest erst auf `main` aus).
+- Der Release-Workflow ist nie gelaufen (er loest auf `main` aus und laesst sich von Hand
+  starten). Die Debug-APK aus `Android Build` ist gebaut, aber nie installiert worden.
 - Kein Schritt aus Abschnitt 3.4 oder 3.5 wurde durchgefuehrt.
 - Kein Einrichtungslink wurde je auf einem Geraet geoeffnet. Ob Android die Domain verifiziert und
   ob der Link die App statt des Browsers oeffnet, zeigt erst ein Geraet mit installierter,
